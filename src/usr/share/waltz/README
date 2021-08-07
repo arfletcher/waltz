@@ -1,0 +1,4 @@
+waltz is a rsync based backup script based around linked directories.
+
+Example waltz configuration files.
+

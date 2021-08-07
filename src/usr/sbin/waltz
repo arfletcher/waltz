@@ -1,0 +1,2242 @@
+#! /usr/bin/perl
+
+my
+$VERSION = '14.04';
+
+=pod
+
+=head1 NAME
+
+B<waltz> - create and manage rsync backups of host directories using hard links to save disc space.
+
+=head1 SYNOPSIS
+
+ waltz [options] [-f <config-file>] [ <host> ]*
+ waltz -h
+ waltz --help
+ waltz --version
+
+=head1 DESCRIPTION
+
+B<waltz> creates a directory of linked backups under a common
+repository. All backups are maintained as
+
+	repository/host/date-string3
+	repository/host/date-string2
+	repository/host/date-string1
+	repository/host/latest -> last-date-string
+
+All files are maintained are linked to previous copies of the same
+file, reducing disc space for the backups.
+A sybolic link C<latest> is maintained to point at the latest backup.
+B<waltz> used rsync to do the actual copying of data, depending on the
+configuration file, and then provides summaries and notifications via
+email.
+
+If hosts are specified on the command line then only those
+hosts are run; otherwise all hosts referenced in the configuration
+file are run.
+
+=head1 OPTIONS
+
+=over 4
+
+=item B<--help>
+
+Display this manual and quit.
+
+=item B<-V>
+
+Display just the version number and quit.
+
+=item B<--version>
+
+Display the name and version; then quit.
+
+=item B<-h>
+
+Display a usage statement and quit.
+
+=item B<-m>
+
+Do not send any reports.
+
+=item B<-v>
+
+Turn on verbose mode detailing all the various options and
+directories.
+
+=item B<-n>
+
+No-op mode - do nothing.
+
+=item B<-s>
+
+Set the subject line for emails sent upon backup completion.
+
+=item B<-P>
+
+Turn on rysnc's progress flag (-P).
+
+=item B<-i>
+
+Turn on rysnc's itemize changes flag (-i).
+
+=item B<-w>
+
+List which directories on which hosts are backed up to where.
+This is good for locating backups after the event.
+
+=item B<-L>
+
+List the repositories specified in the configuration file.
+
+=item B<-W>
+
+List which directories on which hosts are backed up to where.
+This is good for locating backups after the event. The format is 
+	<host>:<dir> on <backup-host>:<repository>
+
+=item B<-R>
+
+List backups for any files specified on the command line. This tries to deduce
+where a file or directory really lives and deduce the path for restoration.
+This is good for locating backups after the event. If no fiel nor
+directory is specified, the current directory is used.
+Usage:
+	waltz -R [<directory|file>]
+
+=item B<-C>
+
+Check that the configuration file parses correctly.
+The exit status reflects the success of this check.
+
+=back
+
+=head1 CONFIGURATION FILE
+
+The configuration runs the backup process with a list of optional
+specific hosts.  Only hosts appropriate for that repository (i.e.
+server) are considered.
+
+The configuration file is nested with braces {}; each value is localised
+to make grouping of backup hosts convenient.
+
+=over 4
+
+=item B<Sections>
+
+Sections are keywords followed by one or more string values and a block enclosed in braces {}. The active sections are:
+
+=over 4
+
+=item B<repository> <hostname>:<directory> { ..... }
+
+A B<repository> is a list of alternative server names and a directory for the repository
+followed by a block.
+
+=item B<backup> <hostname> { ..... }
+
+A B<backup> section is a list of alternative host names followed by a block.
+
+=back
+
+Other sections are only used for nesting.
+
+=back
+
+Each block can contain list keywords followed by the list. Each ends in a semi-colon
+and inherits list items from the parent block. The active list keywords are:
+
+=over 4
+
+=item B<host> [<user>@]<hostname>
+
+Specify the actual target host name instead of the backup section
+name. This is useful if the short name is not available via DNS, etc.
+or if a user name needs to be specified.
+
+=item B<directory> <directory>*
+
+This specifies a list of directories to backup.
+
+=item B<options> <any rsync options>
+
+Add extra options to the rsync command (such as -v or --exclude). Each
+option much be on a B<separate> line. This is due to difficulties in
+parsing the rsync options with spaces.
+
+=item B<expunge> <time>
+
+This deletes old backup directories older than the specified time. The
+default is not to remove any old backups. Times are specified using
+weeks (w), days (d), hours (h), minutes (m) and seconds (s); e.g. '1w 2d'.
+
+NB: the expunge times are cummulative.
+
+=item B<retain> <number>
+
+Retain at least this number of backups. This number does B<not> include
+the backups used to link against nor any backups kept according to a
+I<keep> directive.
+
+=item B<keep> <regular expression>
+
+Any directories match these regular expressions are not expunged.
+
+=item B<rsync> <rsync prog>
+
+Specify which rsync prog to use. The dafault is 'rsync'.
+
+=item B<errors> <emails>
+
+Specifiy who will recieve the reports for hosts that failed to backup
+correctly.
+
+=item B<tell> <emails>
+
+Specifiy who will recieve the reports for hosts.
+
+=back
+
+Each block can also contain flags that determine various actions.
+
+=over 4
+
+=item B<*noop>
+
+Don't do anything for this host if on. The default is no.
+
+=item B<postcommand> <shell command>
+
+Execute the shell command before the backups start.
+
+=item B<postcommand> <shell command>
+
+Execute the following shell command after the backups have been done.
+
+=item B<*ignore>
+
+Don't do a backup for this host, unless it is explicitly specified on
+the command line.
+
+=item B<!worry>
+
+Do a backup for this host but don't worry about errors if set to no.
+The default is yes (i.e. to worry).
+
+=item B<*verbose>
+
+Increase the verbosity of the messages.
+
+=item B<note> 'information string'
+
+Include notes in the reports.
+
+=back
+
+All of these keywords can be abbreviated.
+
+Environment variables PATH, SHELL and RSYNC_RSH may be specified in the configuration file.
+
+=head1 REPORTS
+
+A master report is produced on standard output with one section per
+hosts followed by a summary of the whole session, including the number
+of files and amount of data transferred. Failed targets are also
+repeated.
+
+Emailed reports start with a summary stanza followed by information
+about each of the hosts that are backed up. The summary includes
+information about the total number of files and size of data
+transferred. If an error occurs during the back this is reported on the
+Subject line of the report email and in the summary block.
+
+An example email report is:
+
+	Date: Sun, 20 Mar 2005 04:44:16 -0500
+	From: root
+	Subject: host waltz backup
+	To: fred
+
+	Summary
+	-------
+	Data    8.87GB as 778 files in 19m 14s
+	Disc    /backup        131.14MB available, 84% used
+
+	host1
+	-----
+	Date    Sun 20 March 2005 04:25:01
+	Host    host1
+	Backup  /etc /root /var/spool/cron
+	Backup  /export/data
+	rsync: file has vanished: "/export/data/fred/xxx"
+	Summary 8.87GB as 763 files in 19m 9s
+	Disc    /backup        131.13MB available, 84% used
+
+	host2
+	------
+	Date    Sun 20 March 2005 04:44:10
+	Host    host2
+	Backup  /etc /root /var/spool/cron
+	Summary 253.00B as 3 files in 2s
+	Disc    /backup        131.13MB available, 84% used
+
+and so on.
+
+=head1 EXAMPLE CONFIGURATION FILE
+
+	# Environment - global
+	PATH=/usr/local/bin:$PATH
+	RSYNC_RSH="ssh -q -x -i .ssh/id_dsa"
+
+	repository server:/var/backup
+	{
+
+		# Global
+		postcommand	"hdparm -y `path2dev %repository`"
+
+		# directories to backup.
+		dir	/etc /root /home
+
+		errors	root@domain
+
+		# First host stanza
+		backup host1
+		{
+			host host1.domain
+			alias hosta hostb
+
+			dir	/data
+
+			options	--exclude=Cache
+			options	--exclude=goodlist.db
+			options	--bwlimit=100
+
+			expunge	1w
+			retain	4
+			keep	Monday
+
+			tell	fred@domain
+		}
+
+		# Second host stanza
+		backup host2.domain
+		{
+			dir	/data2
+
+			expunge	4w
+
+			tell	george@domain
+		}
+	}
+
+=head1 SEE ALSO
+
+rsync(1), perl(1) and various perl modules.
+
+=head1 PREREQUISITES
+
+perl(1) and perl modules Mail::Send, IO::Tee, IO::Scalar and
+Filesys::Df.
+
+=head1 RHEL/CENTOS/FEDORA INSTALL
+
+yum -y install perl-Parse-RecDescent perl-Module-Build perl-Module-Pluggable gcc perl-Params-Util
+
+cpan -i Config::Nested IO::Tee IO::Scalar Filesys::Df Text::Table
+
+Or, if you have all the packages created (via cpan2rpm)
+
+yum -y install perl-Config-Nested  perl-IO-Tee perl-IO-stringy perl-Filesys-Df perl-Text-Table perl-MailTools   perl-TimeDate
+
+
+=head1 COPYRIGHT
+
+Copyright (c) 1998-2008 Anthony Fletcher. All rights reserved.
+These modules are free software; you can redistribute them and/or modify
+them under the same terms as Perl itself.
+
+This code is supplied as-is - use at your own risk.
+
+=head1 AUTHOR
+
+Anthony Fletcher
+
+=head1 Fedora/CentOS/RHEL
+
+Install the following packages first:
+	perl-Parse-RecDescent
+	perl-ExtUtils-CBuilder
+	perl-ExtUtils-ParseXS
+	perl-Module-Build
+	perl-TimeDate
+	perl-MailTools
+	perl-Pod-Escapes
+	perl-Pod-Simple
+	perl-Test-Pod
+	perl-IO-stringy
+	perl-Test-Pod-Coverage
+
+=cut
+
+
+use 5;
+use warnings;
+use strict;
+
+# Core modules.
+use Cwd 'realpath';
+use File::Basename;
+use File::Spec;
+use Getopt::Std;
+use Sys::Hostname;
+use Net::Domain qw(hostfqdn);
+use POSIX;
+use Carp;
+use IPC::Open3;
+use Pod::Usage;
+use Data::Dumper;
+use FindBin;
+use File::chdir;
+
+use lib "$FindBin::Bin/../lib";
+
+######################################################################
+
+# Non Core modules.
+BEGIN {
+   our @missing =
+         map +(m/^(\S+)/),
+         grep !eval "use $_; 1",
+         grep $_,
+         split /\s*\n\s*/, "
+Tie::IxHash
+Config::Nested
+Mail::Send
+IO::Tee
+IO::Scalar
+Filesys::Df
+Text::Table
+        " and warn "Please install CPAN modules: cpan -i @missing\n"
+	  and warn "Perhaps yum -y install ", join(' ', map( {s/::/-/g; s/^/perl-/; $_; } @missing)), "\n"
+	  and exit 2;
+}
+
+######################################################################
+
+# module configuration
+$Data::Dumper::Sortkeys = 1;
+$Getopt::Std::STANDARD_HELP_VERSION = 1;
+
+# debugging the parser
+#$::RD_TRACE = 1;
+
+
+# Set printing such that everything to STDOUT is copied to a
+# variable $report.
+my $report;
+&print2vars(\$report);
+
+# Configuration.
+$" = ' ';
+
+# What to do upon signals.
+my $stop = 0;	# emgergency stop.
+my $child;	# any rsync child.
+
+
+# Un-buffer.
+select((select(STDOUT), $| = 1)[$[]);
+select((select(STDERR), $| = 1)[$[]);
+
+# initialisation.
+my $hostname	= hostname();
+my $fqdn	= hostfqdn();
+my $rhost	= $hostname;
+my $prog	= basename($0);
+my @conf	= ();
+my $args	= join(' ', $0, @ARGV);
+my %backup	= ();
+my %failed	= ();
+my $Start	= time();
+my $subject	= "$hostname $prog backup";
+my $today	= '%a %e %B %Y %T';	# for dates
+my $format	= '%Y-%m-%b-%d-%a-%T';	# for subdirectory names.
+
+my $linknumber	= 1;	# link against this number of directories.
+my $max2delete	= 2;	# Max number of directories to expunge in any run.
+
+my %report	= (); # Reports to send people.
+my %Repositories = ();
+my %top	= ();
+my %Summary	= (
+	files	=> 0,
+	size	=> 0,
+	literal	=> 0,
+);
+my @ignored	= ();	# list of ignored targets.
+my %precommands;
+my @postcommands= ();
+
+my %percent = ();
+my $startdir = getcwd;
+
+# helper functions.
+sub number;
+sub header;
+sub debug { }
+sub verbose { }
+sub Anymatch(\@\@);
+
+# Usage function.
+sub usage
+{
+	pod2usage( {
+		-message	=> '',
+		-exitval	=> 2,
+		#-verbose	=> $verbose_level,
+		-output		=> \*STDERR,
+		@_
+	});
+}
+
+#print $0, @ARGV, "\n";
+
+####################### Parse command line. ########################
+# Support invoking the config file as a prog via #! /usr/bin/env waltz
+# or via #!/usr/local/bin/waltz
+unless (@conf)
+{
+	if (@ARGV && ($ARGV[0] !~ m/^\-/) && (-f $ARGV[0]))
+	{
+		# reserve for later.
+		push @conf, shift(@ARGV);
+	}
+}
+
+####################### Parse command line flags. ########################
+# Note that there is also a silent debug flag -d.
+my %flag;
+getopts('Cf:wWLRVhdmMnvPis:r:', \%flag) || &usage();
+
+# Set subject line....
+$subject = $flag{s} if exists $flag{s};
+
+# set repository
+$rhost = $flag{r} if exists $flag{r};
+
+# set configuration file.
+push (@conf, $flag{f}) if exists $flag{f};
+
+# version reporting.
+if ($flag{V})	{ print "$VERSION\n"; exit; }
+
+# Turn on debugging?
+if ($flag{d})
+{
+	Config::Nested::debugOn('main');
+	Config::Nested::debugOn();
+	debug "debug on\n";
+}
+
+# Turn on verbosity?
+if ($flag{v})
+{
+	# verbose.
+	no warnings;
+	#eval 'sub verbose { print @_; }';
+	*verbose = sub { print @_; };
+}
+
+# For getopts.
+sub VERSION_MESSAGE { my $fh = shift; print $fh "$prog version $VERSION\n";}
+sub HELP_MESSAGE
+{
+	my $fh = shift;
+	select ($fh);
+
+	# Display man page for prog.
+	exec qw(perldoc -F), __FILE__;
+}
+
+# help.
+$flag{h} && &usage (-exit_status => 0, -output => \*STDOUT);
+
+################################################################################
+# Find the configuration file.
+
+unless (@conf)
+{
+	# Locate the configuration file.
+	(my $etc = $FindBin::Bin) =~ s{/[^/]*bin$}{/etc};
+	(my $etc2 = $FindBin::RealBin || $FindBin::Bin ) =~ s{/[^/]*bin$}{/etc};
+	# Oddly - on Strudel the above line is required
+	#print "$etc $etc2\n"; exit;
+
+	for my $d ($etc, $etc2, $FindBin::Bin, '/etc')
+	{
+		next unless -f "$d/$prog.conf";
+		push @conf, "$d/$prog.conf";
+		last;
+	}
+
+	# Make sure that the config array elements are unique.
+	@conf = keys %{{map { $_ => 1 } @conf }};
+}
+
+# Process the configuration file.
+@conf || &usage (-message => "$prog: no configuration file specified or default found.\n");
+
+#print "file=@conf\n"; exit;
+
+# Read the configuration file.
+my $CN = new Config::Nested(
+	section		=> [qw( repository backup)],
+	boolean		=> [qw( worry ignore verbose noop purge)],
+	variable	=> [qw( expunge retain maxdel
+				linknumber rsync host PATH RSYNC_RSH SHELL) ],
+	array		=> [qw( purge tell errors options directory note
+				postcommand precommand
+				okcode keep alias)],
+);
+
+# defaults
+$CN->parse("worry !ignore !noop !verbose !purge linknumber=0") || die "Failed to parse defaults.\n";
+$CN->parse("rsync = rsync") || die "Failed to parse defaults.\n";
+
+# Configuration
+for my $conf (@conf)
+{
+	if ($conf ne '-')
+	{
+		-f $conf || &usage (-message => "$prog: specified configuration file doesn't exist.\n");
+		-r $conf || &usage (-message => "$prog: specified configuration file isn't readable.\n");
+	}
+
+	# NB this overwrites any prior contents!
+	$CN->parseFile($conf) || die "Failed to parse file '$conf'.\n";
+
+	# update config file value
+	# This should be handled by Config::Nested
+	for my $s ( keys %{$CN->{section}})
+	{
+		for my $p ( @{$CN->{section}->{$s}})
+		{
+			next if exists $p->{'_'};
+			$p->{'_'} = $conf;
+		}
+	}
+}
+#die Dumper $CN;
+
+# If we get to this point then the config files were parsed correctly.
+if ($flag{C})
+{
+	#print "Waltz configuration files OK\n";
+	exit 0;
+}
+
+my @backups = $CN->section('backup');
+#print Dumper(\@backups); exit;
+
+# List just the repositories.
+if ($flag{L})
+{
+	my %repo;
+	for my $r ($CN->section('repository'))
+	{
+		$repo{$r->{repository}}++;
+	}
+	print join("\n", sort keys %repo), "\n";
+
+	#print Dumper(\@repos);
+	exit;
+}
+
+# Restore mode.
+if ($flag{R})
+{
+	# remember the number of backup locations.
+	my $count = 0;
+
+	@ARGV = qw(.) unless @ARGV;
+
+	# Convert to full pathname for files.
+	for my $f (@ARGV)
+	{
+		my @list = ($f =~ /^\w+:\//) ? ( $f ) : &filepaths($f);
+		
+		for my $rf (@list)
+		{
+			my $host = $hostname;
+			$host = $1 if ($rf =~ s/([^:]+)://);
+			my $short = $host;$short =~ s/\..*//;
+			debug "host is $host\n";
+
+			## Look for possible aliases.
+			my ($name,$aliases,$addrtype,$length,@addrs) = gethostbyname($host);
+			my @names = ($short, $host, $name, split(/\s+/, $aliases));
+			debug "all names: @names\n";
+
+			for my $obj (@backups)
+			{
+				# Are these of interest?
+				local ($_);
+				my @thishost = ($obj->backup, $obj->host, @{$obj->alias});
+				next unless Anymatch @names, @thishost;
+
+				# Is it within a backup?
+				for my $d (@{$obj->directory})
+				{
+					next unless ($rf =~ m/^$d/);
+
+					my $rrf = $rf;
+					$rrf =~ s!/$!!;
+
+					print $obj->repository, "/";
+					print $obj->backup, "/" ;
+					print 'latest', $rrf;
+
+					print "\n";
+
+					$count ++;
+				}
+			}
+		}
+	}
+	
+	exit !$count;
+}
+
+############################## Start backing up ####################
+
+# Print general information
+verbose header "Prologue";
+verbose "Host\t$hostname\n";
+verbose "FQDN\t$fqdn\n";
+verbose "Args\t$args\n";
+verbose "Date\t", strftime($today, localtime()), "\n";
+verbose "Config\t", join(' ', @conf), "\n";
+verbose "\n";
+
+# Signals
+$SIG{'INT'}  = \&Quit;
+$SIG{'QUIT'}  = \&Quit;
+
+# Forget any backups that should be ignored.
+@backups = grep (!$_->ignore, @backups);
+
+# Do we wish just the backup locations.
+if ($flag{w})
+{
+	for my $obj (@backups)
+	{
+		# Backup what to where?
+		my $host = $obj->host || $obj->backup;
+		next if $host eq '*';
+
+		print "$host to ", $obj->repository, "\n";
+
+		print "\t", join("\n\t", @{$obj->directory}), "\n";
+
+		# Who do we tell.
+		print "Tell ", join(', ', @{$obj->tell}), "\n"
+			if ($obj->{'tell'});
+		print "Errors ", join(', ', @{$obj->errors}), "\n"
+			if ($obj->errors);
+
+		debug Dumper($obj), "\n";
+
+		print "\n";
+	}
+	exit;
+}
+
+# A 4 column table detailing what backups to where.
+if ($flag{W})
+{
+	for my $obj (@backups)
+	{
+		my $host = $obj->host || $obj->backup;
+		next if $host eq '*';
+
+		# Backup what to where?
+		for my $d (@{$obj->directory})
+		{
+			print join("\t",
+				$host,
+				$d,
+				&machine($obj),
+				&vault($obj),
+				$obj->backup,
+			), "\n";
+
+		}
+	}
+	exit;
+}
+
+# Generate a list of names for the local machine.
+my ($name,$aliases,$addrtype,$length,@addrs) = gethostbyname($rhost);
+my @names = ('localhost', $rhost, $fqdn, $name, split(/\s+/, $aliases));
+
+# Add the short name too
+push @names, Net::Domain::hostname();
+
+debug "names: @names\n";
+
+# Remove backup objects that are not on this server.
+@backups = grep (( anymatch (&machine($_), @names)), @backups);
+
+# find default * backups.
+my @star;
+for my $obj (@backups)
+{
+	if ($obj->backup eq '*')
+	{
+		push @star, $obj;
+	}
+}
+
+###########################################################
+# If there are no hosts specified look for clients on this machine.
+unless (@ARGV)
+{
+	for my $obj (@backups)
+	{
+		# ignore wildcard
+		next if ($obj->backup eq '*');
+
+		# remember the rest
+		push @ARGV, $obj->backup;
+	}
+
+	debug 'defaults: ', @ARGV, "\n";
+}
+
+#die "No backups on $rhost.\n" unless @ARGV;
+debug "No backups on $rhost.\n" unless @ARGV;
+exit 0 unless @ARGV;
+
+debug 'Targets: ', @ARGV, "\n";
+
+###########################################################
+# Which targets to backup? (array of keys => 0)
+tie my %target, 'Tie::IxHash'; # preserve order.
+%target = map { $_ => 0 } @ARGV;
+
+# Unique targets only - otherwise we get clashes
+@ARGV = keys %target;
+
+debug 'Targets: ', @ARGV, "\n";
+
+
+###########################################################
+
+for my $h (@ARGV)
+{
+	debug "Target: $h\n";
+
+	# Announce via "ps" what is happening
+	$0 = "$prog: $h";
+
+	my $count = 0;
+	for my $obj (@backups)
+	{
+		#print Dumper($obj); next;
+		#my @targ = grep (exists $target{$_}, $obj->backup, $obj->host, @{$obj->alias});
+		#next if @targ;
+		#$target{$h} ++;
+
+		next unless grep ($_ eq $h, $obj->backup, $obj->host, @{$obj->alias});
+
+		$count++;
+
+		debug "Repository hostname '$rhost' '$fqdn'\n";
+		debug "... looking at repository '", $obj->repository, "'.\n";
+
+		my $error = &Backup($obj);
+		debug "error = '$error'\n";
+
+		next; # OK.
+	}
+	next if $count;
+
+	# Is there a default backup section?
+	if (@star)
+	{
+		for my $obj (@star)
+		{
+			$target{$h} ++;
+
+			$obj->backup($h);
+			my $error = &Backup($obj);
+			debug "error = '$error'\n";
+			$obj->backup('*');
+		}
+
+		next; # OK
+	}
+	warn "No backup for '$h' on $rhost.\n";
+
+}
+
+###########################################################
+
+&epilogue() unless ($flag{w});
+
+# Need to be out of all the repos before we run the postcommands
+#chdir $startdir;
+#local $CWD = $startdir;
+if (@postcommands)
+{
+	print header "Post Commands";
+
+	#debug "PostCmds = ", Dumper(\@postcommands);
+
+	my %finished;
+	for my $p (@postcommands)
+	{
+		local (%ENV) = %{$p->{ENV}};
+		for my $c ( @{$p->{cmds}} )
+		{
+			# no repeats
+			next if exists $finished{$c};
+			$finished{$c} = 1;
+
+			# run commands
+			print "system\t$c\n";
+			next if $flag{n};
+			system $c;
+		}
+	}
+}
+
+# Deal with the reports.
+&report() unless ($flag{w});
+
+exit (%failed ? 1 : 0);
+
+####################################################
+
+# extract the directory specification from the repository
+sub vault
+{
+	my ($obj) = @_;
+	return $1 if ($obj->repository =~ /^[a-z0-9\-\.]*:(.*)$/);
+	return $obj->repository;
+}
+
+# extract the machine specification from the repository
+sub machine
+{
+	my ($obj) = @_;
+	return $1 if ($obj->repository =~ /^([a-z0-9\-\.]*):/i);
+	return 'localhost';
+}
+
+#############################################################################
+
+# Set printing such that everything to STDOUT is also copied
+# to the specified variable.
+sub print2vars
+{
+	# create IO scalers for all the variables...
+	my @out;
+	for my $a (@_)
+	{
+		#open my $FH, '>', $a; push(@out, $FH);
+		push(@out, new IO::Scalar $a);
+	}
+	
+	# tee them all together with stdout.
+	my $OUT = IO::Tee->new(@out, \*STDOUT);
+	
+	# select printing to this new handle.
+	select((select($OUT), $| = 1)[$[]);
+	select ($OUT);
+}
+
+# Trap signals for an emergency stop.
+sub Quit
+{
+	# warn
+	print "FAIL\tRecieved signal @_!\n";
+
+	# child off any rsync.
+	kill 2, $child if ($child);
+
+	# stop everything else.
+	$stop = 1;
+}
+
+# Run the backup for this host object and trap the messages.
+sub Backup
+{
+	#debug Dumper(\@_), "\n"; return '';
+
+	$report = ''; # reset the output report.
+
+	my $start = time();
+	my ($error, $files, $size, $literal, $time, $summary) = backup(@_);
+
+	debug "\n", "-"x60, "\n", "REPORT ", __LINE__, "\n", $report, "-"x60, "\n";
+
+	# extract config from the object.
+	my ($obj) = @_;
+
+	# Who needs to be told?
+	my @tell = @{$obj->tell};
+	push @tell, @{$obj->errors} if ($error);
+
+	debug "telling '@tell'\n";
+
+	# Find email list without dulpicates.
+	@tell = keys %{ { map { $_ => 1 } @tell } };
+
+	# pick a name for this host.
+	my $host = $obj->backup;
+
+	if ($summary eq 'ignored')
+	{
+		push (@ignored, $host);
+	}
+
+	# If the report is too large then truncate it.
+	#my $lines  = ($report =~ tr/\n/\n/);
+	#my $lines  = ($report =~ /\n/);
+	#warn "lines=$lines\n";
+	#if ($lines > 50) { warn "report too big\n"; }
+	
+	# Add to the correct report.
+	for my $to (@tell)
+	{
+		debug "adding message for $to\n";
+
+		$report{$to}->{message} .= $report;
+
+		if ($error)
+		{
+			debug "error is '$error'.\n";
+			debug "summary is '$summary'.\n";
+
+			if ($summary eq 'ignored')
+			{
+				$report{$to}->{ignored} ++;
+				$report{$to}->{ignore} .= "Ignored\t$host\n";
+			}
+			else 
+			{
+				debug "tell $to about error '$error'\n";
+
+				# Record as a failure if we are
+				# worried about this target;
+				# otherwise....
+				$report{$to}->{ ($obj->worry ? 'failed' :  'unworried' ) } ++;
+
+				$report{$to}->{failure} .= $error;
+				$failed{$host} .= $error;
+			}
+		}
+		else
+		{
+			$report{$to}->{succeeded} ++;
+		}
+
+		$report{$to}->{time} += time - $start;
+		$report{$to}->{files} += $files;
+		$report{$to}->{literal} += $literal;
+		$report{$to}->{size} += $size if ($size);
+
+		#if ($summary)
+		#{
+			#$report{$to}->{summary} .= $host . "\t";
+			#$report{$to}->{summary} .= $summary . "\n";
+
+			$report{$to}->{summary} .= join("\t",
+				$host, 
+				&size2human($size), 
+				" (" . &size2human($literal) ." transferred)",
+				"as $files files",
+				"in ". &since($start)
+			) . "\n";
+		#}
+
+		my $repository = &vault($obj);
+		push (@{$report{$to}->{repos}}, $repository) if ($repository);
+	}
+
+	# all done.
+	debug "done Error='$error'\n\n";
+
+	$error;
+}
+
+# Do the backup for this host object.
+sub backup
+{
+	# extract config from the object.
+	my ($obj) = @_;
+
+	# initialise
+	#$report = ''; # reset the output report.
+
+	debug Dumper($obj) if ($flag{d});
+
+	# extract information.
+	my $name	= $obj->backup;
+	my $alias	= $obj->alias;
+	my $rsync	= $obj->rsync;
+	my @dir		= @{$obj->directory};
+	my $repository	= &vault($obj);
+	my $host	= $obj->host || $name;
+
+	# Final expansion.
+	%percent = (
+		host		=> $host,
+		name		=> $name,
+		repository	=> $repository,
+	);
+
+	# Print the title.
+	print header ($name);
+
+	# Promote the environment.
+	local ($ENV{RSYNC_RSH})	= $obj->RSYNC_RSH	if ($obj->RSYNC_RSH ne '');
+	local ($ENV{PATH})	= $obj->PATH		if ($obj->PATH ne '');
+	local ($ENV{SHELL})	= $obj->SHELL		if ($obj->SHELL ne '');
+
+	# Pre-commands
+	for my $c (&percent(@{$obj->{precommand}}))
+	{
+		# Don't do precommands twice
+		next if exists $precommands{$c};
+		$precommands{$c} ++;
+
+		# Run the precommand.
+		print "precmd\t$c\n";
+		next if $flag{n};
+		system $c;
+	}
+	
+	# Save post commands.
+	# Must save the environment as well
+	if (@{$obj->{postcommand}})
+	{
+		push @postcommands, 
+			{
+				ENV  => { %ENV },
+				cmds => [&percent(@{$obj->{postcommand}})],
+			};
+	}
+
+	#debug 'Postcommands=', Dumper @postcommands;
+
+
+        # Extract boolean variables from the object
+	my $noop	= $obj->noop || $flag{n};
+	my $verbose	= $obj->verbose;
+	my $purge	= $obj->purge;
+
+	# remember if this target is to be ignored UNLESS it is specified as
+	# a target.
+	my $isatarget = grep (exists $target{$_}, $obj->backup, $obj->host, @{$obj->alias});
+	if (!$isatarget && $obj->ignore)
+	{
+		print "Ignored!\n";
+		return ("FAIL\t$name\tignored.\n", 0, 0, 0, 0, "ignored");
+	}
+
+	# Augment the SSH command for rsync when in verbose mode.
+	$ENV{RSYNC_RSH} .= ' -vv' if ($flag{v});
+
+	# Initialisation.
+	my %summary = (
+		files	=> 0,
+		size	=> 0,
+		literal	=> 0,
+	);
+
+	# Start time for backup.
+	my $start = time();
+
+	# Check there is something to backup.
+	unless (@dir)
+	{
+		print "FAIL\tIgnoring host '$name' - no directories specified.\n";
+		return ("FAIL\t$name\tnothing to do", $summary{files}, $summary{size}, $summary{literal}, time-$start, "no backup directories");
+	}
+
+	# Change localhost to the actually system name
+	# Otherwise you end up with localhost in a repo
+	# which is confusing.
+	$host = $hostname if (lc($host) eq 'localhost');
+
+	debug "host='$host'\n";
+	debug "purge = $purge\n";
+
+	# Print interesting information/
+	print "Date\t", strftime($today, localtime($start)), "\n";
+	print "Host\t$host";
+	print "\n";
+	print "Note\t", join("\nNote\t", @{$obj->{note}}), "\n" if (@{$obj->{note}});
+	#print " ($name)" unless ($host eq $name);
+	print "Backup\t", join("\nBackup\t", @dir), "\n"; 
+	#print "Top\t", getcwd, "\n"; 
+
+	# sanity checking.
+	unless ($repository)
+	{
+		print "FAIL\tNo repository specified!\n";
+		return ("FAIL\t$name\tNo repository specified\n", $summary{files}, $summary{size}, $summary{literal}, time-$start, 'no repository');
+	}
+
+	# First update relative repositories to full paths.
+	unless (File::Spec->file_name_is_absolute($repository))
+	{
+		$repository = File::Spec->catdir(
+			dirname($obj->{'_'}),
+			$repository,
+		);
+	}
+	
+	unless (-e $repository)
+	{
+		print "FAIL\tRepository '$repository' does not exist!\n";
+		return ("FAIL\t$name\tRepository $repository doesn't exist.\n", $summary{files}, $summary{size}, $summary{literal}, time-$start, 'repository does not exist');
+	}
+	unless (-d $repository)
+	{
+		print "FAIL\tRepository '$repository' is not a directory!\n";
+		return ("FAIL\t$name\tRepository $repository isn't a directory.\n"-1, $summary{files}, $summary{size}, $summary{literal}, time-$start, 'repository  not a directory');
+	}
+
+        # Change directory to the vault, so that relative directry paths
+        # will work.
+	#unless (chdir $repository)
+	local $CWD;
+	eval { $CWD = $repository; }; # chdir
+	if ($@)
+	{
+		print "FAIL\tCannot move to repository '$repository' ($!)!\n";
+		return ("FAIL\t$name\tCannot enter repository $repository.\n", $summary{files}, $summary{size}, $summary{literal}, time-$start, 'repository denied');
+	}
+	print "Server\t$hostname\n";
+	print "Cwd\t", getcwd, "\n"; 
+	verbose "cd '$repository'\n";
+
+	my $where	= strftime($format, localtime($start)); # should this be global?
+	#my $top		= $host;
+	my $top		= $name;
+	my $fulltop	= File::Spec->catdir(getcwd, $top);
+	my $target	= File::Spec->catfile($top, $where);
+	my $lock	= File::Spec->catfile($top, '.lock');
+	my $lockinfo= File::Spec->catfile($lock, 'info');
+
+	# Create a repository, if needed.
+	unless ($noop || -d $top || mkdir $top)
+	{
+		warn "$prog: Cannot create client directory '$top' ($!).\n";
+		return ("FAIL\t$name\tCannot create directory '$top'\n", 0, 0, 0, time-$start, 'failed');
+	}
+
+	# Don't allow multiple backups into the same absolute path top directory.
+	if (exists $top{$fulltop})
+	{
+		print "FAIL\tbackup directory clashes with '$top{$fulltop}' - ignored.\n";
+		return ("FAIL\t$name\tBackup directory clash.\n", $summary{files}, $summary{size}, $summary{literal}, time-$start, 'directory clash');
+	}
+	$top{$fulltop} = $host;	# remember
+
+	# remember the repositories and top directories.
+	$Repositories{$repository}++;
+
+	# Information
+	debug "Where\t$where\n";
+	debug "Repository\t$repository\n";
+	debug "Dir\t$target\n";
+
+	# set up the rsync options.
+	my @options = ('-axHR', '--stats');
+	push @options, &percent(@{$obj->options});
+
+	# add options from command line.
+	unshift(@options, '-n') if ($noop);
+	unshift(@options, '-v') if ($verbose || $flag{v});
+	unshift(@options, '-P') if ($flag{P});
+	unshift(@options, '-i') if ($flag{i});
+
+	# Explore the target directory; expunge, purge etc..
+
+	# Check for a lock
+	if (-d $lock)
+	{
+		# is the lock valid?
+
+		my $info = File::Spec->catfile($lock, 'info');
+		if (open (INFO, '<', $info))
+		{
+			my $line = <INFO>;
+			close INFO;
+
+			if ($line =~ /^(\d+) is backing up /)
+			{
+				if (kill 0, $1)
+				{
+					# still running.
+					print "FAIL\tRepository for $host is locked by running PID $1!\n";
+					return ("FAIL\t$name\tRepository locked\n", 0, 0, 0, time-$start, 'locked');
+				}
+				else
+				{
+					print "WARN\tRepository for $host was locked by PID $1!\n";
+				}
+			}
+			else
+			{
+				print "WARN\tRepository for $host was improperly locked\n";
+			}
+
+			# clean up
+			unlink $info;
+		}
+
+		# clean up
+		rmdir $lock;
+	}
+	
+	# Create a lock
+	unless ($noop || mkdir $lock)
+	{
+		print "FAIL\tCannot lock repository for $host ($!).\n";
+		return ("FAIL\t$name\tRepository unlockable ($!)\n", 0, 0, 0, time-$start, 'locked');
+	}
+	
+	# maintain a connection to the lock directory.
+	local (*LOCK, *INFO);
+	unless ($noop)
+	{
+		opendir (LOCK, $lock);
+		open (INFO, '>', $lockinfo);
+		print INFO "$$ is backing up $host onto $hostname.\n";
+		close (INFO);
+	}
+
+	# Do we purge?
+	if ($purge && -d $target)
+	{
+		# Purge.
+		system '/bin/rm', '-rf', $target unless $noop;
+		print "Purged\t'$target'";
+
+		# reset the start.
+		print " in ", &since($start), "\n";
+		$start = time();
+	}
+
+	# Open the backup collection directory
+	# and remember all the dates.
+	my %date = ();
+	if (opendir(DIR, $top))
+	{
+		for my $e (readdir(DIR))
+		{
+			my $dir = File::Spec->catfile($top, $e);
+
+			next if ($e =~ /^\./);	# ignore dot directories.
+			next if ( -l $dir);	# ignore links.
+			next unless ( -d $dir);	# ignore non-directories.
+
+			# need to use inode change time as typically rsyncd
+			# backups of Winodows PCs reset the last modify time
+			# and breaks the expunge functionality.
+			$date{$e} = (lstat($dir))[10];
+
+			debug "stat $e time $date{$e}\t", POSIX::strftime($format, localtime($date{$e})), "\n" if ($flag{d});
+		}
+
+		closedir DIR;
+	}
+	else
+	{
+		print "FAIL: cannot read directory '$top' ($!).\n";
+		return ("FAIL\t$name\tcannot read directory '$top' ($!).\n", 0, 0, 0, time-$start, 'unreadable');
+	}
+
+	# Sort by date order; newest first.
+	my @dirs = (sort {$date{$b} <=> $date{$a}; } keys %date);
+
+	debug "\@dirs:\n\t", join("\n\t", @dirs), "\n";
+
+	# Look for the last backup(s) so we can link against them.
+	my @linkdirs = ();
+
+	if (@dirs)
+	{
+		my $count = $obj->linknumber || 0;
+		verbose "linknumber: $count\n";
+		$count = 1 if ($count < 1);
+		# NB as dirs is not empty then $#dirs > 0
+		$count = 1+$#dirs if ($count > 1+$#dirs);
+
+		verbose "real linknumber: $count\n";
+
+		while ($count-- > 0 )
+		{
+			my $last = $dirs[$count];
+
+			debug "Linked\t$last\n";
+
+			# This needs to be an absolute path
+			# so that both normal and rsyncd backups work.
+			$last = File::Spec->catdir(File::Spec->updir(), $last);
+			push(@linkdirs, $last);
+			debug "linkdirs: @linkdirs\n";
+		}
+	}
+	debug "\@linkdirs:\n\t", join("\n\t", @linkdirs), "\n";
+
+	#######################################################################
+
+	# Short circuit localhost and names for this host
+	$host  = '' if (grep(lc($host) eq $_, @names));
+	$host .= ':' if ($host);
+
+	verbose "cd '$repository'\n";
+	verbose "PATH=\"$ENV{PATH}\"\n" if exists $ENV{PATH};
+	verbose "RSYNC_RSH=\"$ENV{RSYNC_RSH}\"\n" if exists $ENV{RSYNC_RSH};
+
+	my $error = '';	# keep the error
+
+	# Process the backup directory list
+	# keep rsynvd dirs separate, almagamate others.
+	my @d1;
+	my @d2;
+	for my $d (@dir)
+	{
+		($d =~ /^:/) ? push @d1, $d : push @d2, $d;
+		debug "d1 = (", @d1, ")\n";
+		debug "d2 = (", @d2, ")\n";
+	}
+	@dir = @d1;
+	unshift @dir, join(' ', @d2) if (@d2);
+
+	# loop over the directory list, doing the rsync commands.
+	for my $backup (@dir)
+	{
+		#my $backup = join(' ', @dir);
+		$backup =~ s/^\s+//;
+
+		# copy the link directories and target.
+		my @linkdirs = @linkdirs;
+		my ($target) = $target;
+		my ($origtarget) = $target;
+
+		# Are we doing an rsyncd type backup?
+		if ($backup =~ /^:/)
+		{
+			# we are in rsyncd mode and need to fix the target directory.
+			my ($top) = File::Spec->splitdir($backup);
+			$target = File::Spec->catdir($target, $top);
+
+			# Make the dated directory and the rsyncd module directory
+			# only for rsyncd backups. Otherwise rsync will make this for us.
+			mkdir ($origtarget) unless $noop;
+			mkdir ($target) unless $noop;
+			debug "New target directory: '$target'\n";
+
+			# update the link directories.
+			for my $d (@linkdirs)
+			{
+				$d = File::Spec->catdir(File::Spec->updir(), $d, $top);
+			}
+		}
+
+		# add the link directories to the options (locally).
+		my @options = @options;
+		for my $d (@linkdirs)
+		{
+			push(@options, "--link-dest=$d");
+		}
+
+		# How to backup.
+		my @cmd = ($rsync, @options);
+
+		if ($host)
+		{
+			# not localhost
+			push @cmd, "$host$backup";
+		}
+		else
+		{
+			# Localhost syntax is slightly different.
+			push @cmd, split(/\s+/, $backup);
+		}
+
+		# Create the full path so the verbose mode reports a command that
+		# can be run manually.
+		$target = File::Spec->catdir($repository, $target);
+
+		push @cmd, $target;
+
+		verbose "target\t$target\n";
+		verbose "cmd\t'", join("' '", @cmd), "'\n";
+		debug "cmd\t'", join("' '", @cmd), "'\n";
+
+		# Back up.......
+		unless ($noop || $stop)
+		{
+			local $SIG{PIPE} = sub { print "rsync pipe failed."; };
+			#local $SIG{CHLD} = sub { print "rsync finished."; };
+
+			# Trap both STDER and STDOUT from rsync.
+			my ($IN, $RSYNC);
+			#unless ($child = open3 ($IN, $RSYNC, $RSYNC, '-') || exec @cmd ) 
+			unless ($child = open3 ($IN, $RSYNC, $RSYNC, @cmd ) )
+			{
+				#print "rsync aborted!\n";
+				die "rsync child aborted.\n"
+			}
+			close $IN;
+
+			# Read the results of the rsync.
+			local ($_);
+			local $/ = "\n";	# line mode (for the rsync command).
+
+			my $stats = 0;
+			my $lines = 0;
+			my $vanished = 0;
+			while (<$RSYNC>)
+			{
+				# Pick out the interesting stats.
+				$summary{size}    += number($1) if (/^Total transferred file size: (\S+) bytes/);
+				$summary{files}   += number($2) if (/^Number of (regular )?files transferred: (\S+)/);
+				$summary{literal} += number($1) if (/^Literal data: (\S+)\s+bytes/);
+
+				# consider the errors; should we ignore it?
+				if (/^rsync error:(.*\(code (\d+)\))/)
+				{
+					# pass error through.
+					print;
+
+					my $code = $2;
+					my $e = $1;
+
+					local ($_);
+					if (grep($_ == $code, @{$obj->okcode}))
+					{
+						print "rsync: allowed error $e\n";
+					}
+					else
+					{
+						# Not allowed.
+						$error .= "FAIL\t$name\t$e\n";
+					}
+				}
+				elsif (/Can't exec/)
+				{
+					$error .= "FAIL\t$name\tERROR\t $&\n";
+				}
+
+				# The stats section starts with the line:
+				#      Number of files:
+				if (/^Number of files:/) { $stats ++; }
+
+				# do nothing else if we are in the stats section.
+				next if ($stats);
+
+				# ignore blank lines from rsync.
+				next if (/^\s*$/);
+
+				# Add the 'rsync: ' leader unless it's already there.
+				s/^/rsync: / unless (/^rsync: /);
+
+				# Trap vanished files.
+				if (/^rsync: file has vanished:/)
+				{
+					++$vanished;
+					next;
+				}
+
+				# Print everything but the stats.
+				print;
+
+				# deal with some errors.
+				if (/^rsync: open ".*": Read\-only file system \(30\)$/)
+				{
+					# Serious problem with backing store.
+					kill 1, $child;
+					$error .= "FAIL\t$name\tERROR\tkilled for read-only file system error\n";
+				}
+
+				# Count output lines and stop if there are too many.
+				$lines ++;
+				if (!$flag{v} && $lines > 500)
+				{
+					# there is something wrong.
+					kill 1, $child;
+					$error .= "FAIL\t$name\tERROR\tkilled for too much output\n";
+				}
+			}
+			close $RSYNC || print "Rsync Failed!\n";
+			waitpid $child, 0;	# reap child process.
+			$child = '';		# forget.
+
+			# Deal with oddity errors.
+			#$error .= "FAIL\t$name\tERROR\t$vanished vanished files\n" if ($vanished > 0);
+			print "WARN\t$vanished vanished files\n" if ($vanished > 0);
+		}
+
+		# If it's an rsyncd type backup, remove any empty
+		# directories afterwards - in case of complete failure.
+		if ($backup =~ /^:/)
+		{
+			# don't worry about errors.
+			# If there are empty, there will vanish.
+			rmdir ($target);
+			rmdir ($origtarget);
+		}
+	}
+
+	# keep a global sum.
+	$Summary{size}    += $summary{size};	# keep a global sum.
+	$Summary{files}   += $summary{files};	# keep a global sum.
+	$Summary{literal} += $summary{literal};	# keep a global sum.
+
+	# end of backup.
+	my $summary = &size2human($summary{size}). " (" . &size2human($summary{literal}) ." transferred) as $summary{files} files in ". &since($start);
+	print "Summary\t$summary\n";
+
+	# Report how full the repository is.
+	my $ref = df('.', 1);
+	my $dir = getcwd;
+	#print Dumper(\$ref);
+	print "Repo\t$hostname:$repository\n";
+	print "Disc\t$dir\t", &size2human($ref->{bavail}), ' available, ', $ref->{per}, "% used\n";
+
+	print $error if ($error);
+
+	# Remake the latest link.
+	if (-d $target)
+	{
+		my $latest = File::Spec->catfile($top, 'latest');
+		unlink ($latest) if (-l $latest);
+		symlink $where, $latest;
+	}
+
+	#######################################################################
+	# Expunge any old directories but not if there are only
+	# a few left. Process oldest first!
+	# Do nothing if there was an error.
+	#my $expunge = join(' ', &array($obj, 'expunge')); #cummulative
+	my $expunge = $obj->expunge;
+	my $retain  = $obj->retain;
+	my $maxdel  = $obj->maxdel;
+
+	$retain ||= 2;
+	$maxdel ||= 5;
+
+	if (@dirs && !$error && $expunge)
+	{
+		# When to expunge.
+		$expunge = &time2sec($expunge);
+
+		# Number of backups to retain.
+		$retain = 2 if ($retain < 1);
+
+		# Max number of directories to expunge in any run.
+		$maxdel = 2 if ($maxdel < 1);
+
+		verbose "Expunge after $expunge seconds.\n";
+		verbose "retain at least $retain backups\n";
+		verbose "delete at most $maxdel backups\n";
+		verbose $#dirs +1, " directories to consider for deletion.\n";
+		debug "dirs:\n\t", join("\n\t", @dirs), "\n";
+
+		if ($retain > $#dirs)
+		{
+			$retain = $#dirs + 1;
+			verbose "can only retain $retain backups\n";
+		}
+
+		# Track actual deletions...
+		my $deleted = 0;
+
+		# remove any directories that are to keep.
+		for my $k (@{$obj->keep})
+		{
+			verbose "Keeping\t", join(' ', grep (/$k/, @dirs)), "\n" if ($flag{v});
+			debug "keeping directories that match '$k'.\n";
+			@dirs = grep (!/$k/, @dirs);
+		}
+		debug "unkept dirs:\n\t", join("\n\t", @dirs), "\n";
+
+		# retain a number of directories
+		while (--$retain >= 0)
+		{
+			my $d = shift @dirs;
+			verbose "Retaining\t$d\n";
+		}
+		debug "unretained dirs:\n\t", join("\n\t", @dirs), "\n";
+
+		# Loop of the directories, deleting?
+		for my $e (@dirs)
+		{
+			# Note that a deleted dir doesn't
+			# change the size of @dir.... hence
+			# subtract $deleted.
+			#last unless (1+ $#dirs - $deleted > $retain);
+
+			# How old is it?
+			my $dir = File::Spec->catfile($top, $e);
+			my $age = time - $date{$e};
+
+			debug "stat $e: $date{$e}\tage=$age\t", &duration($age), "\n"; 
+
+			# Do we wish to expunge this directory?
+			if ($age > $expunge)
+			{
+				my $start = time();
+
+				# It's too old.... expunge.
+				system '/bin/rm', '-rf', $dir unless $noop;
+
+				# reset the start.
+				#pinfo "Duration: ", strftime('%T', gmtime( time() - $start)), "\n";
+				print "Expunged '$e' in ", &since($start);
+				print "; it was ", &duration($age), " old.\n";
+
+				# forget about this directory.
+				delete $date{$e};
+				$deleted ++;	# deletion count.
+				
+				# Only expunge a small number of directory per run!
+				debug "maxdel = $maxdel\n";
+				last unless ($deleted < $maxdel); 
+			}
+		}
+	}
+
+	# release the lock
+	unless ($noop)
+	{
+		closedir(LOCK);
+		unlink $lockinfo;
+		rmdir $lock;
+	}
+
+	# all done.
+	debug "done\n\n";
+
+	return ($error, $summary{files}, $summary{size}, $summary{literal}, time-$start, $summary);
+}
+
+
+########################################################################
+## convertions functions.
+
+# return string as though it were an underlined header.
+sub header
+{
+	my $title = join(' ', @_);
+
+	my $str = "\n" . $title . "\n";
+	$title =~ s/./-/g;
+
+	$str . $title , "\n";
+}
+
+# Turn a number of seconds in a duration string.
+sub duration
+{
+	use integer;
+	my $w= $_[0];
+
+	debug "duration = $w\n";
+
+
+	my $s = ($w % 60); $w /= 60;
+	my $m = ($w % 60); $w /= 60;
+	my $h = ($w % 24); $w /= 24;
+	my $d = ($w %  7); $w /=  7;
+
+	my $str = '';
+	$str .= "${w}w " if ($w > 0);
+	$str .= "${d}d " if ($d > 0);
+	$str .= "${h}h " if ($h > 0);
+	$str .= "${m}m " if ($m > 0);
+	$str .= "${s}s " if ($s > 0);
+	$str =~ s/\s+$//g;
+	$str =~ s/\s+/ /g;
+	$str = '0s' unless $str;
+
+	$str;
+}
+
+# Return string indicating the current elapsed time.
+sub since { &duration(time - $_[0]); }
+
+# Take a sizein bytes and turn that into so many KB or MB or GB.
+# s/(\d+)\s*bytes/&size2human($1)/ge;
+sub size2human
+{
+	my $s = $_[0];
+
+	#print "size2human: s='$s'\n";
+
+	return 0 unless $s;
+
+	my @units = qw (B KB MB GB TB);
+
+	my $unit = '';
+	for my $u (@units)
+	{
+		$unit = $u;
+		last if ($s < 1024);
+		$s /= 1024;
+	}
+
+	if ($unit eq $units[0]) { return "$s$unit"; }
+
+	#print "size2human: out s='$s'\n";
+
+	# round to 2 decimal places and add units.
+	sprintf('%0.2f%s', $s, $unit);
+}
+
+# Convert a time string to a number of seconds.
+sub time2sec
+{
+	local ($_) = $_[0];
+
+	# Time could be 7w 3h 2m
+	# w = weeks, h = hours, d = days, m =minutes, s =seconds.
+	my $time = 0;
+	$time += $1 if (s/(\d+)s//);
+	$time += $1 * 60 if (s/(\d+)m//);
+	$time += $1 * 3600 if (s/(\d+)h//);
+	$time += $1 * 24*3600 if (s/(\d+)d//);
+	$time += $1 * 7*24*3600 if (s/(\d+)w//);
+	$time += $1 * 28*7*24*3600 if (s/(\d+)M//);
+
+	warn "$prog: Odd expunge time '$_'.\n" unless (/^\s*$/);
+
+	$time;
+}
+
+# Convert a stanza to a string for debugging.
+# Arrays are printed on multiple lines.
+sub stanza2str
+{
+	my %stanza = @_;
+	my $str = '';
+
+	for my $k (sort keys %stanza)
+	{
+		my $val = (ref $stanza{$k} eq 'ARRAY')
+			? join("\n$k\t", @{$stanza{$k}})
+			: $stanza{$k};
+
+		$str .= "$k\t$val\n";
+	}
+
+	$str;
+}
+
+# Epilogue reporting
+sub epilogue
+{
+	# Is there anything to say?
+	return unless (%report);
+	
+	# The final summary.
+	print header 'Epilogue';
+
+	print "Host\t$hostname\n";
+	print "Cwd\t", getcwd, "\n"; 
+	print "Conf\t", join(' ', @conf), "\n";
+	print "Args\t$args\n";
+
+	#print "Duration\t", &since($Start), "\n";
+	print "Summary\t", &size2human($Summary{size});
+	print " (" . &size2human($Summary{literal});
+	print " transferred) as $Summary{files} files in ";
+	print &since($Start), "\n";
+
+	print "Ignored\t", join(' ', @ignored), "\n" if (@ignored);
+	print "Failed\t", join(' ', keys %failed), "\n" if (%failed);
+
+	# How much space is left for the repositories.
+	for my $r (keys %Repositories)
+	{
+		my $ref = df($r, 1);
+		print "Disc\t$r\t", &size2human($ref->{bavail}), ' available, ', $ref->{per}, "% used\n";
+	}
+}
+
+# finish by sending reports.
+sub report
+{
+	# Is there anything to say?
+	return unless (%report);
+	
+	print header 'Reporting';
+
+	# deal with sending reports.
+	for my $to (keys %report)
+	{
+		# Ignore reports to no-one.
+		next unless ($to);
+
+		my @extra = ();
+		push (@extra, "$report{$to}->{failed} FAILED")
+					if (exists $report{$to}->{failed});
+		push (@extra, "$report{$to}->{succeeded} succeeded")
+					if (exists $report{$to}->{succeeded});
+		push (@extra, "$report{$to}->{unworried} unworried")
+					if (exists $report{$to}->{unworried});
+		push (@extra, "$report{$to}->{ignored} ignored")
+					if (exists $report{$to}->{ignored});
+		my $extra = join('; ', @extra);
+
+		# local copy of subject.
+		my $subject = "$subject $extra.";
+
+		debug "Sending subject '$subject' to '$to'\n";
+		debug "Size: ", $report{$to}->{size}, "\n";
+		debug "Literal: ", $report{$to}->{literal}, "\n";
+		debug "Files: ", $report{$to}->{files}, "\n";
+		debug "Time: ", $report{$to}->{time}, "\n";
+		debug $report{$to}->{message};
+		debug "\n---------------------\n";
+
+		print "Email\t$to\t$extra\n";
+
+		next if $flag{n};	# don't send reports if noop.
+		next if $flag{m};	# don't send reports if -m flag specified.
+		next unless $flag{M};	# only send reports if -M flag specified.
+
+		debug "To: '$to'\n";
+
+		my $To = $to;
+		#$To = 'arif';
+
+		# Send report via email
+		my $fh = \*STDOUT; # debugging.
+
+		#use File::Temp qw(tempfile);
+		#my ($fh, $filename) = tempfile( 'mailXXXXXX', SUFFIX=>'.mbox');
+		#print "filename = '$filename'\n";
+
+
+		# Start an email, unless we are debugging.
+		my $msg;
+		unless ($flag{d})
+		{
+			$msg = new Mail::Send Subject=>$subject, To=>$To;
+			$fh = $msg->open;
+		}
+
+		# List the failures.
+		my $failures = '';
+		$failures .= $report{$to}->{failure} if (exists $report{$to}->{failure});
+		$failures .= $report{$to}->{ignore} if (exists $report{$to}->{ignore});
+
+		if ($failures)
+		{
+			print $fh header "Failures";
+
+			# Tabulate failures
+			my $tb = Text::Table->new();
+			for my $line (split(/\n/, $failures))
+			{
+				$tb->add(split(/\t/, $line));
+
+			}
+			print $fh $tb;
+		}
+
+		print $fh header "Summary";
+		print $fh "Server\t$hostname\n";
+
+		# Final disc usage.
+		for my $r (sort keys %{ { map { $_, 1 } @{$report{$to}->{repos}} } })
+		{
+			my $ref = df($r, 1);
+			next unless $ref;
+
+			print $fh "Disc\t$r\t", &size2human($ref->{bavail}), ' available, ', $ref->{per}, "% used\n";
+		}
+
+		# List the ignored hosts.
+		#print $fh $report{$to}->{ignore} if (exists $report{$to}->{ignore});
+
+		# List the failures.
+		#print $fh $report{$to}->{failure} if (exists $report{$to}->{failure});
+
+		# List the summaries.
+		#print $fh $report{$to}->{summary} if (exists $report{$to}->{summary});
+
+		# reformat the summaries and total.
+		if (exists $report{$to}->{summary})
+		{
+			# Add the totals to the summary.
+			$report{$to}->{summary} .= join("\t",
+				"TOTAL",
+				&size2human($report{$to}->{size}) ,
+				" (" . &size2human($report{$to}->{literal}) . " transferred)",
+				"as $report{$to}->{files} files",
+				"in " . &duration($report{$to}->{time})
+			) . "\n";
+
+
+			debug "\n", "-"x60, "\n", $report{$to}->{summary}, "-"x60, "\n";
+
+			# Load the table.
+			my $tb = Text::Table->new();
+			for my $line (split(/\n/, $report{$to}->{summary}))
+			{
+				$tb->add(split(/\t/, $line));
+			}
+
+			print $fh header "Data";
+			print $fh $tb;
+		}
+
+		# Add the detail.
+		print $fh $report{$to}->{message}, "\n";
+
+		print $fh "\n";
+		$fh->close unless ($flag{d});
+
+	}
+
+	print "\n";
+}
+
+sub percent
+{
+	#debug "percent( ", join(', ', @_), ")\n";
+
+	local ($_);
+	for (@_)
+	{
+		debug "in: $_\t";
+		s/%(\w+)/exists($percent{$1}) ? $percent{$1} : ''/ge;
+		debug "out: $_\n";
+	}
+
+	@_;
+}
+
+sub expand
+{
+	#print "expand ", join(', ', @_), "\n";
+	local ($_) = @_;
+	s/\$(\w+)/&_expand($1)/ge;
+
+	$_;
+}
+
+sub _expand
+{
+	#print "_expand ", join(', ', @_), "\n";
+	return $Config::Nested::obj[0]->{$_[0]} if (exists $Config::Nested::obj[0]->{$_[0]});
+	return $ENV{$_[0]} if (exists $ENV{$_[0]});
+	'';
+}
+
+# Returns if the first element matches ANY of the subsequent
+# elelments.
+sub anymatch
+{
+	my ($first, @rest) = @_;
+	for my $r (@rest) { return 1 if $first eq $r; }
+	0;
+}
+# Returns if any of the first array matches ANY of the second.
+sub Anymatch(\@\@)
+{
+	my ($A, $B) = @_;
+
+	#debug "\n\ta = @{$A}\n\tb = @{$B}\n";
+
+	for my $a (@{$A})
+	{
+		for my $b (@{$B})
+		{
+			return 1 if ($a eq $b);
+		}
+	}
+
+	0;
+}
+
+# Convert a string into a number.
+# Idealy deals with a number like "221,344"
+sub number
+{
+	my ($n) = @_;
+
+	$n =~ s/,//g;
+
+	$n;
+}
+
+# Take a single local path name and return a list of 
+# possible real paths (hostname:path), resolving NFS.
+sub filepaths
+{
+	my ($a) = @_;
+
+	#my $b = realpath($a);
+	my $b = File::Spec->rel2abs($a);
+	
+	# Always return the local system's path
+	my @list = ( hostname.":$b");
+
+	debug "$a => $b\n";
+
+	# Find the mount point by stating at the directory and
+	# moving upwards. When the dev number changes thats the end.
+	my $c = $b;
+
+	# first find an entry that exists....
+	my $dev = (stat($c))[0];
+	while (!defined $dev)
+	{
+		$c = dirname($c);
+		$dev = (stat($c))[0];
+	}
+	#$c = realpath($c);
+
+	# If it's not a directory, use the parent.
+	$c =  -d $c ? $c : dirname($c);
+
+	# Initialise
+	my $p = dirname($c);
+	debug "dir = $c p=$p dev=$dev\n";
+
+	# Loop upwards
+	while ( $c ne '/' && (stat($p))[0] == $dev)
+	{
+		$c = $p;
+		$p = dirname($c);
+
+		debug "c = $c p=$p\n";
+	}
+	my $r = File::Spec->abs2rel( $b, $c ) ;
+
+	debug "mount pt = $c and r=$r\n";
+
+	# Get the mounted filesystems
+	# NB do not cache as some automounted filesystem
+	# might get mount as it is looked at.
+	my $mounts = `mount`;
+
+	# Look through the mounts for this mount point.
+	if ( my ($dev, $type) = ($mounts =~ /^(.*) on $c type (\S+)/m))
+	{
+		debug "dev=$dev type=$type\n";
+		if ($type =~ /^nfs/) # nfs or nfs4
+		{
+			my $host = '';
+			$host = $1 if $dev =~ s/^(\w+)://;
+
+			my $path = ($r eq '.') ? $dev : File::Spec->catfile($dev, $r);
+			push @list,  "$host:$path";
+		}
+
+		# deal with other special cases here.....
+	}
+	else
+	{
+		die "Cannot find mount point for $c!\n";
+	}
+
+	@list;
+}
+
+__END__
+
+VERSION 14.3
+
+The directory under the repo should always have been, and is now, the
+name of the backup section. As such 'waltz -W' should the correct
+sub-directory in the repo when there is a hostname entry in the backup
+section. Warning - this will cause a new backup to be started.
+
+VERSION 14.2
+
+Packaging change.
+
+VERSION 14.1
+
+Fix some relative directory repo issues.
+
+VERSION 14.0
+
+Added the note directive.
+
+VERSION 13.17
+
+Removed the requirement for the module Sys::Filesystems, which is not
+available in RHEL/CentOS and has build issues.
+
+Minor changes to the documentation and error messages.
+
+VERSION 13.16
+
+Fixed reporting an empty post command section.
+Fixed localhost short-circuit for rsync.
+
+VERSION 13.15
+
+The client 'localhost' in a repository will stored by the real
+host name, rather than localhost. This usually only occurs on
+removable discs and will reduce confusion between repositories on
+multiple discs using localhost as the client name for different clients.
+
+VERSION 13.14
+
+For backup checking (-R), explicitly look for the short host name as well.
+
+VERSION 13.12
+
+Fixed reporting for newer versions of rsync. The new stats summary can contain
+numbers with commas.
+
+VERSION 13.11
+
+Moved post-commands after disc summary, so any umounts are done last.
+
+VERSION 13.10
+
+Added pre-command support.
+
+VERSION 13.9
+
+Ignore any "file has vanished" errors.
+
+VERSION 13.8
+
+Trap "vanished files" errors and just summarise them
+
+VERSION 13.7
+
+Allow repository directories to be local relative to the configuration file.
+Now backup discs and be mounted in different locations and waltz will still work.
+
+VERSION 13.6
+
+Fix off by one bug in the linkdest count; only affects the second backup for a host.
+
+VERSION 13.5
+
+Force hosts to be backed up in the order specified in configuration file.
+
+VERSION 13.4
+
+Set the 'ps' string to indicate which host is being currently backed up.
+

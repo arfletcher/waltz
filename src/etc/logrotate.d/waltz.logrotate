@@ -1,0 +1,8 @@
+/var/log/waltz.log {
+    missingok
+    notifempty
+    # maxsize better but not available in RHEL5
+    size 30k
+    weekly
+    create 0600 root root
+}

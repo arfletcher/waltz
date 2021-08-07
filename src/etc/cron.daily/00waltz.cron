@@ -1,0 +1,23 @@
+#!/bin/sh
+
+# Daily cron script for waltz.
+
+# Log to file if not run from a terminal.
+[ -t 0 ] || exec 2>&1 >> /var/log/waltz.log
+
+# waltz options
+FLAGS="-M"
+CONFDIR=/etc/waltz.d
+
+# Override
+[ -f /etc/sysconfig/waltz ] && . /etc/sysconfig/waltz
+[ -f /etc/default/waltz   ] && . /etc/default/waltz
+
+# Run a waltz backup if the configuration exists.
+for conf in /etc/waltz.conf $CONFDIR/*.conf
+do
+	[ -f "$conf" ] || continue
+
+	waltz -f "$conf" $FLAGS "$@"
+done
+

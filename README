@@ -1,0 +1,11 @@
+NAME
+====
+   waltz - manage rsync backups of host directories using hard links to save disc space.
+
+
+To create packages:
+
+	make tgz rpm deb
+
+NB: keep version in sync between *.spec and DEBIAN/control
+

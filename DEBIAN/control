@@ -1,0 +1,9 @@
+Package: waltz
+Version: 14.4
+Section: base
+Priority: optional
+Architecture: all
+Depends: perl,libconfig-nested-perl,libtext-table-perl,libio-tee-perl,libtie-ixhash-perl,libfilesys-df-perl,libio-stringy-perl,libmailtools-perl
+Maintainer: Anthony Fletcher <anthony@bifb.org>
+Description: waltz creates and manages a directory of linked backups of remote and
+ local systems under a common repository.

@@ -1,4 +1,8 @@
 # Create packages
+#        make tgz rpm deb
+#
+# NB: keep version in sync between *.spec and DEBIAN/control
+
 
 NAME:=$(shell basename $$(pwd) )
 

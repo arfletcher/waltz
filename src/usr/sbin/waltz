@@ -37,6 +37,12 @@ If hosts are specified on the command line then only those
 hosts are run; otherwise all hosts referenced in the configuration
 file are run.
 
+A strong suggestion is to make your backup destination read-only,
+either through off-line media or the immutable flag (not perfect but
+better than nothing). You can mount and unmount file-systems via the
+precommand and postcommand directives. Also the top level repository
+unreadable to all but the backup user, usually root.
+
 =head1 OPTIONS
 
 =over 4
@@ -884,7 +890,14 @@ for my $h (@ARGV)
 
 ###########################################################
 
-&epilogue() unless ($flag{w});
+# How much space is left for the repositories.
+# Collect before the postcommand, which may unmount the repo
+my @dfinfo;
+for my $r (keys %Repositories)
+{
+	my $ref = df($r, 1);
+	push @dfinfo, ("Disc\t$r\t". &size2human($ref->{bavail}). ' available, '. $ref->{per}. "% used");
+}
 
 # Need to be out of all the repos before we run the postcommands
 #chdir $startdir;
@@ -893,7 +906,7 @@ if (@postcommands)
 {
 	print header "Post Commands";
 
-	#debug "PostCmds = ", Dumper(\@postcommands);
+	debug "PostCommands=", Dumper(\@postcommands);
 
 	my %finished;
 	for my $p (@postcommands)
@@ -906,12 +919,15 @@ if (@postcommands)
 			$finished{$c} = 1;
 
 			# run commands
-			print "system\t$c\n";
+			print "system\t$p->{name}\t$c\n";
 			next if $flag{n};
 			system $c;
 		}
 	}
 }
+
+# Epilogue
+&epilogue(@dfinfo) unless ($flag{w});
 
 # Deal with the reports.
 &report() unless ($flag{w});
@@ -1092,13 +1108,6 @@ sub backup
 	my $repository	= &vault($obj);
 	my $host	= $obj->host || $name;
 
-	# Final expansion.
-	%percent = (
-		host		=> $host,
-		name		=> $name,
-		repository	=> $repository,
-	);
-
 	# Print the title.
 	print header ($name);
 
@@ -1106,33 +1115,6 @@ sub backup
 	local ($ENV{RSYNC_RSH})	= $obj->RSYNC_RSH	if ($obj->RSYNC_RSH ne '');
 	local ($ENV{PATH})	= $obj->PATH		if ($obj->PATH ne '');
 	local ($ENV{SHELL})	= $obj->SHELL		if ($obj->SHELL ne '');
-
-	# Pre-commands
-	for my $c (&percent(@{$obj->{precommand}}))
-	{
-		# Don't do precommands twice
-		next if exists $precommands{$c};
-		$precommands{$c} ++;
-
-		# Run the precommand.
-		print "precmd\t$c\n";
-		next if $flag{n};
-		system $c;
-	}
-	
-	# Save post commands.
-	# Must save the environment as well
-	if (@{$obj->{postcommand}})
-	{
-		push @postcommands, 
-			{
-				ENV  => { %ENV },
-				cmds => [&percent(@{$obj->{postcommand}})],
-			};
-	}
-
-	#debug 'Postcommands=', Dumper @postcommands;
-
 
         # Extract boolean variables from the object
 	my $noop	= $obj->noop || $flag{n};
@@ -1168,7 +1150,7 @@ sub backup
 		return ("FAIL\t$name\tnothing to do", $summary{files}, $summary{size}, $summary{literal}, time-$start, "no backup directories");
 	}
 
-	# Change localhost to the actually system name
+	# Change localhost to the actual system name
 	# Otherwise you end up with localhost in a repo
 	# which is confusing.
 	$host = $hostname if (lc($host) eq 'localhost');
@@ -1200,7 +1182,51 @@ sub backup
 			$repository,
 		);
 	}
+
+	######################
+	my $top		= $name;
+	my $fulltop	= File::Spec->catdir($repository, $top);
+	my $where	= strftime($format, localtime($start)); # should this be global?
+	my $target	= File::Spec->catfile($repository, $top, $where);
+	my $lock	= File::Spec->catfile($top, '.lock');
+	my $lockinfo	= File::Spec->catfile($lock, 'info');
+
+	# Expansion for commands.
+	%percent = (
+		host		=> $host,
+		name		=> $name,
+		repository	=> $repository,
+		target		=> $target,
+	);
+	debug "Pre and post command expansions=", Dumper \%percent;
+
+	# Deal with any pre-commands
+	for my $c (&percent(@{$obj->{precommand}}))
+	{
+		# Don't do precommands twice
+		next if exists $precommands{$c};
+		$precommands{$c} ++;
+
+		# Run the precommand.
+		print "precmd\t$c\n";
+		next if $flag{n};
+		system $c;
+	}
 	
+	# Save post commands for later.
+	# Must save the environment as well
+	if (@{$obj->{postcommand}})
+	{
+		push @postcommands, 
+			{
+				name  => $name,
+				ENV  => { %ENV },
+				cmds => [&percent(@{$obj->{postcommand}})],
+			};
+	}
+	debug 'Current PostCommands=', Dumper \@postcommands;
+
+	# Check on the repository
 	unless (-e $repository)
 	{
 		print "FAIL\tRepository '$repository' does not exist!\n";
@@ -1225,15 +1251,7 @@ sub backup
 	print "Server\t$hostname\n";
 	print "Cwd\t", getcwd, "\n"; 
 	verbose "cd '$repository'\n";
-
-	my $where	= strftime($format, localtime($start)); # should this be global?
-	#my $top		= $host;
-	my $top		= $name;
-	my $fulltop	= File::Spec->catdir(getcwd, $top);
-	my $target	= File::Spec->catfile($top, $where);
-	my $lock	= File::Spec->catfile($top, '.lock');
-	my $lockinfo= File::Spec->catfile($lock, 'info');
-
+	
 	# Create a repository, if needed.
 	unless ($noop || -d $top || mkdir $top)
 	{
@@ -1266,6 +1284,8 @@ sub backup
 	unshift(@options, '-v') if ($verbose || $flag{v});
 	unshift(@options, '-P') if ($flag{P});
 	unshift(@options, '-i') if ($flag{i});
+
+	# ACTION
 
 	# Explore the target directory; expunge, purge etc..
 
@@ -1327,7 +1347,11 @@ sub backup
 	if ($purge && -d $target)
 	{
 		# Purge.
-		system '/bin/rm', '-rf', $target unless $noop;
+		unless ($noop)
+		{
+			system 'chattr', '-Rf', '-i', $target;
+			system '/bin/rm', '-rf', $target;
+		}
 		print "Purged\t'$target'";
 
 		# reset the start.
@@ -1416,8 +1440,8 @@ sub backup
 	for my $d (@dir)
 	{
 		($d =~ /^:/) ? push @d1, $d : push @d2, $d;
-		debug "d1 = (", @d1, ")\n";
-		debug "d2 = (", @d2, ")\n";
+		debug "d1 = ", Dumper \@d1;
+		debug "d2 = ", Dumper \@d2;
 	}
 	@dir = @d1;
 	unshift @dir, join(' ', @d2) if (@d2);
@@ -1473,10 +1497,6 @@ sub backup
 			# Localhost syntax is slightly different.
 			push @cmd, split(/\s+/, $backup);
 		}
-
-		# Create the full path so the verbose mode reports a command that
-		# can be run manually.
-		$target = File::Spec->catdir($repository, $target);
 
 		push @cmd, $target;
 
@@ -1700,7 +1720,11 @@ sub backup
 				my $start = time();
 
 				# It's too old.... expunge.
-				system '/bin/rm', '-rf', $dir unless $noop;
+				unless ($noop)
+				{
+					system 'chattr', '-Rf', '-i', $dir;
+					system '/bin/rm', '-rf', $dir;
+				}
 
 				# reset the start.
 				#pinfo "Duration: ", strftime('%T', gmtime( time() - $start)), "\n";
@@ -1867,12 +1891,9 @@ sub epilogue
 	print "Ignored\t", join(' ', @ignored), "\n" if (@ignored);
 	print "Failed\t", join(' ', keys %failed), "\n" if (%failed);
 
-	# How much space is left for the repositories.
-	for my $r (keys %Repositories)
-	{
-		my $ref = df($r, 1);
-		print "Disc\t$r\t", &size2human($ref->{bavail}), ' available, ', $ref->{per}, "% used\n";
-	}
+	# Print extra info from function args.
+	print join("\n", @_);
+
 }
 
 # finish by sending reports.
@@ -2015,19 +2036,20 @@ sub report
 	print "\n";
 }
 
+# Replace  each %expansion for each string in the argument array.
 sub percent
 {
-	#debug "percent( ", join(', ', @_), ")\n";
-
+	my (@args) = @_;	# copy
 	local ($_);
-	for (@_)
-	{
-		debug "in: $_\t";
-		s/%(\w+)/exists($percent{$1}) ? $percent{$1} : ''/ge;
-		debug "out: $_\n";
-	}
 
-	@_;
+	debug "in ", Dumper \@args;
+	for (@args)
+	{
+		s/%(\w+)/exists($percent{$1}) ? $percent{$1} : ''/ge;
+	}
+	debug "out: ", Dumper \@args;
+
+	@args;
 }
 
 sub expand
@@ -2159,6 +2181,13 @@ sub filepaths
 }
 
 __END__
+
+VERSION 14.4
+
+Fix post commands to have access to the backup directory expansion
+%target and arrange that those command run at the right time. This
+supports setting the immutable flag on new backups. The automated
+deletion of old backups removes the immutable flag beore deletion.
 
 VERSION 14.3
 

@@ -1758,7 +1758,7 @@ sub backup
 
 
 ########################################################################
-## convertions functions.
+## Conversion functions.
 
 # return string as though it were an underlined header.
 sub header

@@ -26,7 +26,7 @@ rpm: $(NAME)-$(VER)-$(REL).noarch.rpm
 	@ls -al *.rpm
 
 $(NAME)-$(VER)-$(REL).noarch.rpm: $(NAME).spec ${FILES}
-	rpmbuild -ba $(NAME).spec | tee $<.log
+	rpmbuild -D "_sourcedir $$PWD" -ba $(NAME).spec | tee $<.log
 	@mv -v $$(sed -n -e 's/^Wrote: //p' $<.log) .
 	rm $<.log
 

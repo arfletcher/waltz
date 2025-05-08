@@ -1,7 +1,7 @@
 #! /usr/bin/perl
 
 my
-$VERSION = '14.04';
+$VERSION = '15.01';
 
 =pod
 
@@ -343,18 +343,17 @@ rsync(1), perl(1) and various perl modules.
 
 =head1 PREREQUISITES
 
-perl(1) and perl modules Mail::Send, IO::Tee, IO::Scalar and
-Filesys::Df.
+perl(1) and perl modules Mail::Send, IO::Tee, IO::Scalar.
 
 =head1 RHEL/CENTOS/FEDORA INSTALL
 
 yum -y install perl-Parse-RecDescent perl-Module-Build perl-Module-Pluggable gcc perl-Params-Util
 
-cpan -i Config::Nested IO::Tee IO::Scalar Filesys::Df Text::Table
+cpan -i Config::Nested IO::Tee IO::Scalar Text::Table
 
 Or, if you have all the packages created (via cpan2rpm)
 
-yum -y install perl-Config-Nested  perl-IO-Tee perl-IO-stringy perl-Filesys-Df perl-Text-Table perl-MailTools   perl-TimeDate
+yum -y install perl-Config-Nested  perl-IO-Tee perl-IO-stringy perl-Text-Table perl-MailTools   perl-TimeDate
 
 
 =head1 COPYRIGHT
@@ -406,6 +405,8 @@ use Data::Dumper;
 use FindBin;
 use File::chdir;
 
+use IPC::Run qw( run );
+
 use lib "$FindBin::Bin/../lib";
 
 ######################################################################
@@ -422,7 +423,6 @@ Config::Nested
 Mail::Send
 IO::Tee
 IO::Scalar
-Filesys::Df
 Text::Table
         " and warn "Please install CPAN modules: cpan -i @missing\n"
 	  and warn "Perhaps yum -y install ", join(' ', map( {s/::/-/g; s/^/perl-/; $_; } @missing)), "\n"
@@ -935,6 +935,27 @@ if (@postcommands)
 exit (%failed ? 1 : 0);
 
 ####################################################
+
+# df of a directory.
+sub df
+{
+	my ($dir, $unit) = @_;
+	my $out_and_err;
+	my @cmd = ('df', '-k', $dir);
+	my $r = run \@cmd, '<', \undef, '>&', \$out_and_err;
+
+	# split off the header
+	my ($header, $row) = split(/\n/, $out_and_err);
+
+	# Load into a hash
+	my %ref;
+	@ref{qw(fs bavail used available per mntpt)} = split(/\s+/, $row);
+
+	$ref{per} =~ s/%$//;
+	$ref{free} = 100-$ref{per};
+
+	\%ref;
+}
 
 # extract the directory specification from the repository
 sub vault

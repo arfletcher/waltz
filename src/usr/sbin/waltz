@@ -1726,15 +1726,12 @@ sub backup
 			debug "keeping directories that match '$k'.\n";
 			@backups = grep (!/$k/, @backups);
 		}
-		debug "unkept backups\n\t", join("\n\t", @backups), "\n";
+		debug "unkept backups ", Dumper \@backups;
 
-		# retain a number of directories
-		while (--$retain >= 0)
-		{
-			my $d = shift @backups;
-			verbose "Retaining\t$d\n";
-		}
-		debug "unretained backups\n\t", join("\n\t", @backups), "\n";
+		# Remove retained backups.
+		my @retained = splice @backups, 0, $retain;
+		verbose "Retaining $retain backups\n\t", join("\n\t", @retained), "\n";
+		debug "unretained backups", Dumper \@backups;
 
 		# Loop of the directories, deleting?
 		for my $e (@backups)
@@ -1751,30 +1748,33 @@ sub backup
 			debug "stat $e: $date{$e}\tage=$age\t", &duration($age), "\n"; 
 
 			# Do we wish to expunge this directory?
-			if ($age > $expunge)
+			if ($age <= $expunge)
 			{
-				my $start = time();
-
-				# It's too old.... expunge.
-				unless ($noop)
-				{
-					system 'chattr', '-Rf', '-i', $dir;
-					system '/bin/rm', '-rf', $dir;
-				}
-
-				# reset the start.
-				#pinfo "Duration: ", strftime('%T', gmtime( time() - $start)), "\n";
-				print "Expunged '$e' in ", &since($start);
-				print "; it was ", &duration($age), " old.\n";
-
-				# forget about this directory.
-				delete $date{$e};
-				$deleted ++;	# deletion count.
-				
-				# Only expunge a small number of directory per run!
-				debug "maxdel = $maxdel\n";
-				last unless ($deleted < $maxdel); 
+				debug  "$e too young!\n";
+				next;
 			}
+
+			my $start = time();
+
+			# It's too old.... expunge.
+			unless ($noop)
+			{
+				system 'chattr', '-Rf', '-i', $dir;
+				system '/bin/rm', '-rf', $dir;
+			}
+
+			# reset the start.
+			#pinfo "Duration: ", strftime('%T', gmtime( time() - $start)), "\n";
+			print "Expunged '$e' in ", &since($start);
+			print "; it was ", &duration($age), " old.\n";
+
+			# forget about this directory.
+			delete $date{$e};
+			$deleted ++;	# deletion count.
+
+			# Only expunge a small number of directory per run!
+			debug "maxdel = $maxdel\n";
+			last unless ($deleted < $maxdel);
 		}
 	}
 
@@ -1813,8 +1813,7 @@ sub duration
 	use integer;
 	my $w= $_[0];
 
-	debug "duration = $w\n";
-
+	#debug "duration = $w\n";
 
 	my $s = ($w % 60); $w /= 60;
 	my $m = ($w % 60); $w /= 60;

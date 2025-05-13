@@ -1171,6 +1171,7 @@ sub backup
 		files	=> 0,
 		size	=> 0,
 		literal	=> 0,
+		deleted	=> 0,
 	);
 
 	# Start time for backup.
@@ -1422,29 +1423,29 @@ sub backup
 	}
 
 	# Sort by date order; newest first.
-	my @dirs = (sort {$date{$b} <=> $date{$a}; } keys %date);
+	my @backups = (sort {$date{$b} <=> $date{$a}; } keys %date);
 
-	debug "\@dirs:\n\t", join("\n\t", @dirs), "\n";
+	debug "\@backups\n\t", join("\n\t", @backups), "\n";
 
 	# Look for the last backup(s) so we can link against them.
 	my @linkdirs = ();
-	if (@dirs && $obj->linknumber > 1)
+	if (@backups && $obj->linknumber > 1)
 	{
-		@linkdirs = splice @dirs, 0, $obj->linknumber;
+		@linkdirs = splice @backups, 0, $obj->linknumber;
 	}
 
 	# The next oldest backup dir is a candidate for reuse
-	if (@dirs && $obj->recycle)
+	if (@backups && $obj->recycle)
 	{
 		# Recycle the next oldest backup as the current
-		my $reuse = File::Spec->catfile($top, pop @dirs);
+		my $reuse = File::Spec->catfile($top, pop @backups);
 		print "Reuse\t$reuse as $target\n";
 		rename ($reuse, $target) || die "Reuse rename $reuse as $target failed $!";
 	}
 
 	debug "target : $target\n";
 	debug "link dirs: ", Dumper(\@linkdirs);
-	debug "old dirs: ", Dumper(\@dirs);
+	debug "old backups ", Dumper(\@backups);
 
 	#######################################################################
 
@@ -1459,7 +1460,7 @@ sub backup
 	my $error = '';	# keep the error
 
 	# Process the backup directory list
-	# keep rsynvd dirs separate, almagamate others.
+	# keep rsyncd dirs separate, amalgamate others.
 	my @d1;
 	my @d2;
 	for my $d (@dir)
@@ -1472,10 +1473,9 @@ sub backup
 	unshift @dir, join(' ', @d2) if (@d2);
 
 	# loop over the directory list, doing the rsync commands.
-	debug "@dir: ", Dumper \@dir;
+	debug "\@dir: ", Dumper \@dir;
 	for my $backup (@dir)
 	{
-		#my $backup = join(' ', @dir);
 		$backup =~ s/^\s+//;
 
 		# copy the link directories and target.
@@ -1507,6 +1507,7 @@ sub backup
 		my @options = @options;
 
 		push(@options, map {"--link-dest=../$_"} @linkdirs );
+		push(@options, '--old-args');
 
 		# How to backup.
 		my @cmd = ($rsync, @options);
@@ -1536,7 +1537,7 @@ sub backup
 
 		verbose "target\t$target\n";
 		verbose "cmd\t'", join("' '", @cmd), "'\n";
-		debug   "cmd\t'", join("' '", @cmd), "'\n";
+		debug   "cmd\t", Dumper \@cmd;
 
 		# Back up.......
 		unless ($noop || $stop)
@@ -1692,7 +1693,7 @@ sub backup
 	my $retain  = $obj->retain || 2;
 	my $maxdel  = $obj->maxdel || 5;
 
-	if (@dirs && !$error && $expunge)
+	if (@backups && !$error && $expunge)
 	{
 		# When to expunge.
 		$expunge = &time2sec($expunge);
@@ -1706,12 +1707,12 @@ sub backup
 		verbose "Expunge after $expunge seconds.\n";
 		verbose "retain at least $retain backups\n";
 		verbose "delete at most $maxdel backups\n";
-		verbose $#dirs +1, " directories to consider for deletion.\n";
-		debug "dirs:\n\t", join("\n\t", @dirs), "\n";
+		verbose $#backups +1, " directories to consider for deletion.\n";
+		debug "backups\n\t", join("\n\t", @backups), "\n";
 
-		if ($retain > $#dirs)
+		if ($retain > $#backups)
 		{
-			$retain = $#dirs + 1;
+			$retain = $#backups + 1;
 			verbose "can only retain $retain backups\n";
 		}
 
@@ -1721,27 +1722,27 @@ sub backup
 		# remove any directories that are to keep.
 		for my $k (@{$obj->keep})
 		{
-			verbose "Keeping\t", join(' ', grep (/$k/, @dirs)), "\n" if ($flag{v});
+			verbose "Keeping\t", join(' ', grep (/$k/, @backups)), "\n" if ($flag{v});
 			debug "keeping directories that match '$k'.\n";
-			@dirs = grep (!/$k/, @dirs);
+			@backups = grep (!/$k/, @backups);
 		}
-		debug "unkept dirs:\n\t", join("\n\t", @dirs), "\n";
+		debug "unkept backups\n\t", join("\n\t", @backups), "\n";
 
 		# retain a number of directories
 		while (--$retain >= 0)
 		{
-			my $d = shift @dirs;
+			my $d = shift @backups;
 			verbose "Retaining\t$d\n";
 		}
-		debug "unretained dirs:\n\t", join("\n\t", @dirs), "\n";
+		debug "unretained backups\n\t", join("\n\t", @backups), "\n";
 
 		# Loop of the directories, deleting?
-		for my $e (@dirs)
+		for my $e (@backups)
 		{
 			# Note that a deleted dir doesn't
 			# change the size of @dir.... hence
 			# subtract $deleted.
-			#last unless (1+ $#dirs - $deleted > $retain);
+			#last unless (1+ $#backups - $deleted > $retain);
 
 			# How old is it?
 			my $dir = File::Spec->catfile($top, $e);

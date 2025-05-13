@@ -13,7 +13,6 @@ Requires:       perl(Cwd) >= 1
 Requires:       perl(Data::Dumper) >= 1
 Requires:       perl(File::Spec) >= 1
 Requires:       perl(IO::Scalar) >= 1
-Requires:       perl(Filesys::Df) >= 0.9
 Requires:       perl(IO::Tee) >= 0.64
 Requires:       perl(Mail::Send) >= 1
 Requires:       perl(Pod::Usage) >= 1

@@ -172,6 +172,11 @@ Add extra options to the rsync command (such as -v or --exclude). Each
 option much be on a B<separate> line. This is due to difficulties in
 parsing the rsync options with spaces.
 
+=item B<recycle>
+
+This uses the oldest backup scheduled for deletion as the current backup,
+avoiding a possibly lengthy deletion process.
+
 =item B<expunge> <time>
 
 This deletes old backup directories older than the specified time. The
@@ -189,6 +194,12 @@ I<keep> directive.
 =item B<keep> <regular expression>
 
 Any directories match these regular expressions are not expunged.
+
+=item B<recyle>
+
+Instead of creating a new backup directory use an old directory.
+This is quicker as no directory deletion is needed at the expense of
+maybe keeping some unwanted files as the configuration changes.
 
 =item B<rsync> <rsync prog>
 
@@ -480,6 +491,7 @@ my %Summary	= (
 	files	=> 0,
 	size	=> 0,
 	literal	=> 0,
+	deleted	=> 0,
 );
 my @ignored	= ();	# list of ignored targets.
 my %precommands;
@@ -599,7 +611,7 @@ unless (@conf)
 # Read the configuration file.
 my $CN = new Config::Nested(
 	section		=> [qw( repository backup)],
-	boolean		=> [qw( worry ignore verbose noop purge)],
+	boolean		=> [qw( worry ignore verbose noop purge recycle)],
 	variable	=> [qw( expunge retain maxdel
 				linknumber rsync host PATH RSYNC_RSH SHELL) ],
 	array		=> [qw( purge tell errors options directory note
@@ -608,7 +620,7 @@ my $CN = new Config::Nested(
 );
 
 # defaults
-$CN->parse("worry !ignore !noop !verbose !purge linknumber=0") || die "Failed to parse defaults.\n";
+$CN->parse("worry !ignore !noop !verbose !purge linknumber=0 !recycle") || die "Failed to parse defaults.\n";
 $CN->parse("rsync = rsync") || die "Failed to parse defaults.\n";
 
 # Configuration
@@ -1297,7 +1309,7 @@ sub backup
 	debug "Dir\t$target\n";
 
 	# set up the rsync options.
-	my @options = ('-axHR', '--stats');
+	my @options = qw(-axHR --stats --delete);
 	push @options, &percent(@{$obj->options});
 
 	# add options from command line.
@@ -1390,7 +1402,7 @@ sub backup
 			my $dir = File::Spec->catfile($top, $e);
 
 			next if ($e =~ /^\./);	# ignore dot directories.
-			next if ( -l $dir);	# ignore links.
+			next if ( -l $dir);		# ignore links.
 			next unless ( -d $dir);	# ignore non-directories.
 
 			# need to use inode change time as typically rsyncd
@@ -1416,31 +1428,23 @@ sub backup
 
 	# Look for the last backup(s) so we can link against them.
 	my @linkdirs = ();
-
-	if (@dirs)
+	if (@dirs && $obj->linknumber > 1)
 	{
-		my $count = $obj->linknumber || 0;
-		verbose "linknumber: $count\n";
-		$count = 1 if ($count < 1);
-		# NB as dirs is not empty then $#dirs > 0
-		$count = 1+$#dirs if ($count > 1+$#dirs);
-
-		verbose "real linknumber: $count\n";
-
-		while ($count-- > 0 )
-		{
-			my $last = $dirs[$count];
-
-			debug "Linked\t$last\n";
-
-			# This needs to be an absolute path
-			# so that both normal and rsyncd backups work.
-			$last = File::Spec->catdir(File::Spec->updir(), $last);
-			push(@linkdirs, $last);
-			debug "linkdirs: @linkdirs\n";
-		}
+		@linkdirs = splice @dirs, 0, $obj->linknumber;
 	}
-	debug "\@linkdirs:\n\t", join("\n\t", @linkdirs), "\n";
+
+	# The next oldest backup dir is a candidate for reuse
+	if (@dirs && $obj->recycle)
+	{
+		# Recycle the next oldest backup as the current
+		my $reuse = File::Spec->catfile($top, pop @dirs);
+		print "Reuse\t$reuse as $target\n";
+		rename ($reuse, $target) || die "Reuse rename $reuse as $target failed $!";
+	}
+
+	debug "target : $target\n";
+	debug "link dirs: ", Dumper(\@linkdirs);
+	debug "old dirs: ", Dumper(\@dirs);
 
 	#######################################################################
 
@@ -1468,6 +1472,7 @@ sub backup
 	unshift @dir, join(' ', @d2) if (@d2);
 
 	# loop over the directory list, doing the rsync commands.
+	debug "@dir: ", Dumper \@dir;
 	for my $backup (@dir)
 	{
 		#my $backup = join(' ', @dir);
@@ -1500,10 +1505,8 @@ sub backup
 
 		# add the link directories to the options (locally).
 		my @options = @options;
-		for my $d (@linkdirs)
-		{
-			push(@options, "--link-dest=$d");
-		}
+
+		push(@options, map {"--link-dest=../$_"} @linkdirs );
 
 		# How to backup.
 		my @cmd = ($rsync, @options);
@@ -1519,11 +1522,21 @@ sub backup
 			push @cmd, split(/\s+/, $backup);
 		}
 
+		# Finish the rsync command
 		push @cmd, $target;
+
+		# Create the target as a directory.
+		# If you leave it to rsync then you can end up with an odd edge case when backing up a single file.
+		mkdir ($target) unless $noop;
+		unless ($noop || -d $target || mkdir $target)
+		{
+			warn "$prog: Cannot create client directory '$target' ($!).\n";
+			return ("FAIL\t$name\tCannot create directory '$target'\n", 0, 0, 0, time-$start, 'failed');
+		}
 
 		verbose "target\t$target\n";
 		verbose "cmd\t'", join("' '", @cmd), "'\n";
-		debug "cmd\t'", join("' '", @cmd), "'\n";
+		debug   "cmd\t'", join("' '", @cmd), "'\n";
 
 		# Back up.......
 		unless ($noop || $stop)
@@ -1550,10 +1563,13 @@ sub backup
 			my $vanished = 0;
 			while (<$RSYNC>)
 			{
+				debug "OUT ", $_;
+
 				# Pick out the interesting stats.
 				$summary{size}    += number($1) if (/^Total transferred file size: (\S+) bytes/);
 				$summary{files}   += number($2) if (/^Number of (regular )?files transferred: (\S+)/);
 				$summary{literal} += number($1) if (/^Literal data: (\S+)\s+bytes/);
+				$summary{deleted} += number($1) if (/^Number of deleted files: (\d+)/);
 
 				# consider the errors; should we ignore it?
 				if (/^rsync error:(.*\(code (\d+)\))/)
@@ -1641,12 +1657,13 @@ sub backup
 	}
 
 	# keep a global sum.
-	$Summary{size}    += $summary{size};	# keep a global sum.
-	$Summary{files}   += $summary{files};	# keep a global sum.
-	$Summary{literal} += $summary{literal};	# keep a global sum.
+	$Summary{size}    += $summary{size};
+	$Summary{files}   += $summary{files};
+	$Summary{literal} += $summary{literal};
+	$Summary{deleted} += $summary{deleted};
 
 	# end of backup.
-	my $summary = &size2human($summary{size}). " (" . &size2human($summary{literal}) ." transferred) as $summary{files} files in ". &since($start);
+	my $summary = &size2human($summary{size}). " (" . &size2human($summary{literal}) ." transferred) as $summary{files} files in ". &since($start) . " with $summary{deleted} deleted";
 	print "Summary\t$summary\n";
 
 	# Report how full the repository is.
@@ -1662,8 +1679,8 @@ sub backup
 	if (-d $target)
 	{
 		my $latest = File::Spec->catfile($top, 'latest');
-		unlink ($latest) if (-l $latest);
-		symlink $where, $latest;
+		unlink ($latest);
+		symlink $where, $latest || die "Cannot create latest symlink $!\n";
 	}
 
 	#######################################################################
@@ -1672,11 +1689,8 @@ sub backup
 	# Do nothing if there was an error.
 	#my $expunge = join(' ', &array($obj, 'expunge')); #cummulative
 	my $expunge = $obj->expunge;
-	my $retain  = $obj->retain;
-	my $maxdel  = $obj->maxdel;
-
-	$retain ||= 2;
-	$maxdel ||= 5;
+	my $retain  = $obj->retain || 2;
+	my $maxdel  = $obj->maxdel || 5;
 
 	if (@dirs && !$error && $expunge)
 	{

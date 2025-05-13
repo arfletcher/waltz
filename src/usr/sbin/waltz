@@ -1733,8 +1733,8 @@ sub backup
 		verbose "Retaining $retain backups\n\t", join("\n\t", @retained), "\n";
 		debug "unretained backups", Dumper \@backups;
 
-		# Loop of the directories, deleting?
-		for my $e (@backups)
+		# Loop of the directories, oldest first, deleting?
+		for my $e (reverse @backups)
 		{
 			# Note that a deleted dir doesn't
 			# change the size of @dir.... hence

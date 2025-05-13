@@ -1,5 +1,6 @@
 repo
 examples
+old
 *.rpm
 *.deb
 *.tgz

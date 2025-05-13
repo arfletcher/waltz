@@ -65,3 +65,6 @@ old: FORCE
 	@mkdir -pv old
 	mv -vit old *.rpm *.deb *.tgz
 
+tag: $(NAME)-$(VER)-$(REL).noarch.rpm
+	V=$$(rpm -q --qf '%{VERSION}' $<); git tag -m "version tag $$V" -a $$V
+

@@ -912,8 +912,6 @@ for my $r (keys %Repositories)
 }
 
 # Need to be out of all the repos before we run the postcommands
-#chdir $startdir;
-#local $CWD = $startdir;
 if (@postcommands)
 {
 	print header "Post Commands";
@@ -1197,9 +1195,9 @@ sub backup
 	print "Host\t$host";
 	print "\n";
 	print "Note\t", join("\nNote\t", @{$obj->{note}}), "\n" if (@{$obj->{note}});
-	#print " ($name)" unless ($host eq $name);
+	#debug " ($name)" unless ($host eq $name);
 	print "Backup\t", join("\nBackup\t", @dir), "\n"; 
-	#print "Top\t", getcwd, "\n"; 
+	#debug "Top\t", getcwd, "\n";
 
 	# sanity checking.
 	unless ($repository)
@@ -1221,9 +1219,9 @@ sub backup
 	my $top		= $name;
 	my $fulltop	= File::Spec->catdir($repository, $top);
 	my $where	= strftime($format, localtime($start)); # should this be global?
-	my $target	= File::Spec->catfile($repository, $top, $where);
-	my $lock	= File::Spec->catfile($top, '.lock');
-	my $lockinfo	= File::Spec->catfile($lock, 'info');
+	my $target	= File::Spec->catfile($fulltop, $where);
+	my $lock	= File::Spec->catdir($fulltop, '.lock');
+	my $lockinfo= File::Spec->catfile($lock, 'info');
 
 	# Expansion for commands.
 	%percent = (
@@ -1275,22 +1273,22 @@ sub backup
         # Change directory to the vault, so that relative directry paths
         # will work.
 	#unless (chdir $repository)
-	local $CWD;
-	eval { $CWD = $repository; }; # chdir
-	if ($@)
-	{
-		print "FAIL\tCannot move to repository '$repository' ($!)!\n";
-		return ("FAIL\t$name\tCannot enter repository $repository.\n", $summary{files}, $summary{size}, $summary{literal}, time-$start, 'repository denied');
-	}
+	#local $CWD;
+	#eval { $CWD = $repository; }; # chdir
+	#if ($@)
+	#{
+	#print "FAIL\tCannot move to repository '$repository' ($!)!\n";
+	#return ("FAIL\t$name\tCannot enter repository $repository.\n", $summary{files}, $summary{size}, $summary{literal}, time-$start, 'repository denied');
+	#}
 	print "Server\t$hostname\n";
 	print "Cwd\t", getcwd, "\n"; 
 	verbose "cd '$repository'\n";
 	
 	# Create a repository, if needed.
-	unless ($noop || -d $top || mkdir $top)
+	unless ($noop || -d $fulltop || mkdir $fulltop)
 	{
-		warn "$prog: Cannot create client directory '$top' ($!).\n";
-		return ("FAIL\t$name\tCannot create directory '$top'\n", 0, 0, 0, time-$start, 'failed');
+		warn "$prog: Cannot create client directory '$fulltop' ($!).\n";
+		return ("FAIL\t$name\tCannot create directory '$fulltop'\n", 0, 0, 0, time-$start, 'failed');
 	}
 
 	# Don't allow multiple backups into the same absolute path top directory.
@@ -1396,11 +1394,12 @@ sub backup
 	# Open the backup collection directory
 	# and remember all the dates.
 	my %date = ();
-	if (opendir(DIR, $top))
+	debug "Reading dir $fulltop\n";
+	if (opendir(DIR, $fulltop))
 	{
 		for my $e (readdir(DIR))
 		{
-			my $dir = File::Spec->catfile($top, $e);
+			my $dir = File::Spec->catfile($fulltop, $e);
 
 			next if ($e =~ /^\./);	# ignore dot directories.
 			next if ( -l $dir);		# ignore links.
@@ -1418,8 +1417,8 @@ sub backup
 	}
 	else
 	{
-		print "FAIL: cannot read directory '$top' ($!).\n";
-		return ("FAIL\t$name\tcannot read directory '$top' ($!).\n", 0, 0, 0, time-$start, 'unreadable');
+		print "FAIL: cannot read directory '$fulltop' ($!).\n";
+		return ("FAIL\t$name\tcannot read directory '$fulltop' ($!).\n", 0, 0, 0, time-$start, 'unreadable');
 	}
 
 	# Sort by date order; newest first.
@@ -1427,20 +1426,26 @@ sub backup
 
 	debug "\@backups\n\t", join("\n\t", @backups), "\n";
 
+	# The next oldest backup dir is a candidate for reuse
+	if (@backups && $obj->recycle)
+	{
+		# Recycle the oldest backup as the current
+		my $reuse = File::Spec->catdir($fulltop, pop @backups);
+		print "Reuse\t$reuse as $target\n";
+		$noop || rename ($reuse, $target) || die "Reuse rename $reuse as $target failed $!";
+	}
+
 	# Look for the last backup(s) so we can link against them.
 	my @linkdirs = ();
 	if (@backups && $obj->linknumber > 1)
 	{
-		@linkdirs = splice @backups, 0, $obj->linknumber;
-	}
+		my $count = ($obj->linknumber <= scalar(@backups) ) ? $obj->linknumber : scalar(@backups);
+		#debug "link count ", $obj->linknumber, "\n";
+		#debug "number of backups ", scalar(@backups), "\n";
+		#debug "real link count $count\n";
 
-	# The next oldest backup dir is a candidate for reuse
-	if (@backups && $obj->recycle)
-	{
-		# Recycle the next oldest backup as the current
-		my $reuse = File::Spec->catfile($top, pop @backups);
-		print "Reuse\t$reuse as $target\n";
-		$noop || rename ($reuse, $target) || die "Reuse rename $reuse as $target failed $!";
+		#@linkdirs = splice @backups, 0, $obj->linknumber;
+		@linkdirs = @backups[ 0..$count-1 ];
 	}
 
 	debug "target : $target\n";
@@ -1679,7 +1684,7 @@ sub backup
 	# Remake the latest link.
 	if (-d $target)
 	{
-		my $latest = File::Spec->catfile($top, 'latest');
+		my $latest = File::Spec->catfile($fulltop, 'latest');
 		unlink ($latest);
 		symlink $where, $latest || die "Cannot create latest symlink $!\n";
 	}
@@ -1742,7 +1747,7 @@ sub backup
 			#last unless (1+ $#backups - $deleted > $retain);
 
 			# How old is it?
-			my $dir = File::Spec->catfile($top, $e);
+			my $dir = File::Spec->catdir($fulltop, $e);
 			my $age = time - $date{$e};
 
 			debug "stat $e: $date{$e}\tage=$age\t", &duration($age), "\n"; 

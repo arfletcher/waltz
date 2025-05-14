@@ -100,7 +100,7 @@ List the repositories specified in the configuration file.
 =item B<-W>
 
 List which directories on which hosts are backed up to where.
-This is good for locating backups after the event. The format is 
+This is good for locating backups after the event. The format is
 	<host>:<dir> on <backup-host>:<repository>
 
 =item B<-R>
@@ -176,6 +176,8 @@ parsing the rsync options with spaces.
 
 This uses the oldest backup scheduled for deletion as the current backup,
 avoiding a possibly lengthy deletion process.
+If there are no deletions because of retainment condictions, etc then
+a fresh directory is created.
 
 =item B<expunge> <time>
 
@@ -1073,7 +1075,7 @@ sub Backup
 				$report{$to}->{ignored} ++;
 				$report{$to}->{ignore} .= "Ignored\t$host\n";
 			}
-			else 
+			else
 			{
 				debug "tell $to about error '$error'\n";
 
@@ -1102,8 +1104,8 @@ sub Backup
 			#$report{$to}->{summary} .= $summary . "\n";
 
 			$report{$to}->{summary} .= join("\t",
-				$host, 
-				&size2human($size), 
+				$host,
+				&size2human($size),
 				" (" . &size2human($literal) ." transferred)",
 				"as $files files",
 				"in ". &since($start)
@@ -1196,7 +1198,7 @@ sub backup
 	print "\n";
 	print "Note\t", join("\nNote\t", @{$obj->{note}}), "\n" if (@{$obj->{note}});
 	#debug " ($name)" unless ($host eq $name);
-	print "Backup\t", join("\nBackup\t", @dir), "\n"; 
+	print "Backup\t", join("\nBackup\t", @dir), "\n";
 	#debug "Top\t", getcwd, "\n";
 
 	# sanity checking.
@@ -1249,7 +1251,7 @@ sub backup
 	# Must save the environment as well
 	if (@{$obj->{postcommand}})
 	{
-		push @postcommands, 
+		push @postcommands,
 			{
 				name  => $name,
 				ENV  => { %ENV },
@@ -1281,7 +1283,7 @@ sub backup
 	#return ("FAIL\t$name\tCannot enter repository $repository.\n", $summary{files}, $summary{size}, $summary{literal}, time-$start, 'repository denied');
 	#}
 	print "Server\t$hostname\n";
-	print "Cwd\t", getcwd, "\n"; 
+	print "Cwd\t", getcwd, "\n";
 	verbose "cd '$repository'\n";
 	
 	# Create a repository, if needed.
@@ -1426,13 +1428,70 @@ sub backup
 
 	debug "\@backups\n\t", join("\n\t", @backups), "\n";
 
+	#######################################################################
+	# Expunge any old directories but not if there are only
+	# a few left. Process oldest first!
+	# Do nothing if there was an error.
+	#my $expunge = join(' ', &array($obj, 'expunge')); #cummulative
+	my $expunge = $obj->expunge;
+	my $retain  = $obj->retain || 2;
+	my $maxdel  = $obj->maxdel || 5;
+
+	my @deletions;
+
+	if (@backups && $expunge)
+	{
+		@deletions = @backups;
+
+		# Remove any directories that are to keep.
+		for my $k (@{$obj->keep})
+		{
+			debug "keeping directories that match '$k'.\n";
+			#verbose "Keeping\t", join(' ', grep (/$k/, @deletions)), "\n" if ($flag{v});
+
+			@deletions = grep (!/$k/, @deletions);
+		}
+		debug "unkept backups ", Dumper \@deletions;
+
+		# Remove retained backups.
+		my @retained = splice @deletions, 0, $retain;
+		verbose "Retaining $retain backups\n\t", join("\n\t", @retained), "\n";
+		debug "unretained backups: ", Dumper \@deletions;
+
+		# Age based deletions.
+		my $expunge = &time2sec($expunge);
+		@deletions =
+		   grep {
+				my $age = time - $date{$_};
+				debug "stat $_: $date{$_}\tage=$age\t", &duration($age), "\n";
+
+				# Too young?
+				($age > $expunge);
+		   }
+		   @deletions;
+		debug "Deletions: ", Dumper \@deletions;
+
+		# Only delete up to the maximul count
+		@deletions = reverse @deletions;
+		my @toomany = splice @deletions, $maxdel;
+
+		debug "Too many ", Dumper \@toomany;
+		debug "Deletions: ", Dumper \@deletions;
+	}
+
 	# The next oldest backup dir is a candidate for reuse
-	if (@backups && $obj->recycle)
+	if (@deletions && $obj->recycle)
 	{
 		# Recycle the oldest backup as the current
-		my $reuse = File::Spec->catdir($fulltop, pop @backups);
+		my $reuse = pop @deletions;
+
+		# Also remove from the list of backups and linkdirs
+		@backups = grep { $_ ne $reuse; } @backups;
+
 		print "Reuse\t$reuse as $target\n";
+		$reuse = File::Spec->catdir($fulltop, $reuse);
 		$noop || rename ($reuse, $target) || die "Reuse rename $reuse as $target failed $!";
+
 	}
 
 	# Look for the last backup(s) so we can link against them.
@@ -1552,7 +1611,7 @@ sub backup
 
 			# Trap both STDER and STDOUT from rsync.
 			my ($IN, $RSYNC);
-			#unless ($child = open3 ($IN, $RSYNC, $RSYNC, '-') || exec @cmd ) 
+			#unless ($child = open3 ($IN, $RSYNC, $RSYNC, '-') || exec @cmd )
 			unless ($child = open3 ($IN, $RSYNC, $RSYNC, @cmd ) )
 			{
 				#print "rsync aborted!\n";
@@ -1689,97 +1748,27 @@ sub backup
 		symlink $where, $latest || die "Cannot create latest symlink $!\n";
 	}
 
-	#######################################################################
-	# Expunge any old directories but not if there are only
-	# a few left. Process oldest first!
-	# Do nothing if there was an error.
-	#my $expunge = join(' ', &array($obj, 'expunge')); #cummulative
-	my $expunge = $obj->expunge;
-	my $retain  = $obj->retain || 2;
-	my $maxdel  = $obj->maxdel || 5;
-
-	if (@backups && !$error && $expunge)
+	# Delete, oldest first.
+	unless ($error)
 	{
-		# When to expunge.
-		$expunge = &time2sec($expunge);
-
-		# Number of backups to retain.
-		$retain = 2 if ($retain < 1);
-
-		# Max number of directories to expunge in any run.
-		$maxdel = 2 if ($maxdel < 1);
-
-		verbose "Expunge after $expunge seconds.\n";
-		verbose "retain at least $retain backups\n";
-		verbose "delete at most $maxdel backups\n";
-		verbose $#backups +1, " directories to consider for deletion.\n";
-		debug "backups\n\t", join("\n\t", @backups), "\n";
-
-		if ($retain > $#backups)
+		for my $e (@deletions)
 		{
-			$retain = $#backups + 1;
-			verbose "can only retain $retain backups\n";
-		}
+				my $start = time();
 
-		# Track actual deletions...
-		my $deleted = 0;
+				my $dir = File::Spec->catdir($fulltop, $e);
+				unless ($noop)
+				{
+					system 'chattr', '-Rf', '-i', $dir;
+					system '/bin/rm', '-rf', $dir;
+				}
 
-		# remove any directories that are to keep.
-		for my $k (@{$obj->keep})
-		{
-			verbose "Keeping\t", join(' ', grep (/$k/, @backups)), "\n" if ($flag{v});
-			debug "keeping directories that match '$k'.\n";
-			@backups = grep (!/$k/, @backups);
-		}
-		debug "unkept backups ", Dumper \@backups;
+				# reset the start.
+				my $age = time - $date{$e};
+				print "Expunged '$e' in ", &since($start), "; it was ", &duration($age), " old.\n";
 
-		# Remove retained backups.
-		my @retained = splice @backups, 0, $retain;
-		verbose "Retaining $retain backups\n\t", join("\n\t", @retained), "\n";
-		debug "unretained backups", Dumper \@backups;
+				# forget about this directory.
+				delete $date{$e};
 
-		# Loop of the directories, oldest first, deleting?
-		for my $e (reverse @backups)
-		{
-			# Note that a deleted dir doesn't
-			# change the size of @dir.... hence
-			# subtract $deleted.
-			#last unless (1+ $#backups - $deleted > $retain);
-
-			# How old is it?
-			my $dir = File::Spec->catdir($fulltop, $e);
-			my $age = time - $date{$e};
-
-			debug "stat $e: $date{$e}\tage=$age\t", &duration($age), "\n"; 
-
-			# Do we wish to expunge this directory?
-			if ($age <= $expunge)
-			{
-				debug  "$e too young!\n";
-				next;
-			}
-
-			my $start = time();
-
-			# It's too old.... expunge.
-			unless ($noop)
-			{
-				system 'chattr', '-Rf', '-i', $dir;
-				system '/bin/rm', '-rf', $dir;
-			}
-
-			# reset the start.
-			#pinfo "Duration: ", strftime('%T', gmtime( time() - $start)), "\n";
-			print "Expunged '$e' in ", &since($start);
-			print "; it was ", &duration($age), " old.\n";
-
-			# forget about this directory.
-			delete $date{$e};
-			$deleted ++;	# deletion count.
-
-			# Only expunge a small number of directory per run!
-			debug "maxdel = $maxdel\n";
-			last unless ($deleted < $maxdel);
 		}
 	}
 
@@ -1918,7 +1907,7 @@ sub epilogue
 	print header 'Epilogue';
 
 	print "Host\t$hostname\n";
-	print "Cwd\t", getcwd, "\n"; 
+	print "Cwd\t", getcwd, "\n";
 	print "Conf\t", join(' ', @conf), "\n";
 	print "Args\t$args\n";
 
@@ -2146,7 +2135,7 @@ sub number
 	$n;
 }
 
-# Take a single local path name and return a list of 
+# Take a single local path name and return a list of
 # possible real paths (hostname:path), resolving NFS.
 sub filepaths
 {

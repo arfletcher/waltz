@@ -1383,7 +1383,7 @@ sub backup
 		# Purge.
 		unless ($noop)
 		{
-			system 'chattr', '-Rf', '-i', $target;
+			#system 'chattr', '-Rf', '-i', $target;
 			system '/bin/rm', '-rf', $target;
 		}
 		print "Purged\t'$target'";
@@ -1757,7 +1757,7 @@ sub backup
 				my $dir = File::Spec->catdir($fulltop, $e);
 				unless ($noop)
 				{
-					system 'chattr', '-Rf', '-i', $dir;
+					#system 'chattr', '-Rf', '-i', $dir;
 					system '/bin/rm', '-rf', $dir;
 				}
 

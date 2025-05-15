@@ -1732,11 +1732,10 @@ sub backup
 	print "Summary\t$summary\n";
 
 	# Report how full the repository is.
-	my $ref = df('.', 1);
-	my $dir = getcwd;
+	my $ref = df($repository, 1);
 	#print Dumper(\$ref);
 	print "Repo\t$hostname:$repository\n";
-	print "Disc\t$dir\t", &size2human($ref->{bavail}), ' available, ', $ref->{per}, "% used\n";
+	print "Disc\t$repository\t", &size2human($ref->{bavail}), ' available, ', $ref->{per}, "% used\n";
 
 	print $error if ($error);
 

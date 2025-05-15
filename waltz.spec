@@ -18,6 +18,7 @@ Requires:       perl(Mail::Send) >= 1
 Requires:       perl(Pod::Usage) >= 1
 Requires:       perl(Text::Table) >= 1
 Requires:       perl(Tie::IxHash) >= 1
+Requires:       perl(IPC::Run) >= 1
 
 Requires:       logrotate
 Requires:       crontabs

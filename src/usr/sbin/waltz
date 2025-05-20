@@ -956,6 +956,15 @@ sub df
 	my @cmd = ('df', '-k', $dir);
 	my $r = run \@cmd, '<', \undef, '>&', \$out_and_err;
 
+	unless ($r)
+	{
+		# df failed - permissions? SELinux?
+		my %ref;
+		@ref{qw(fs bavail used available per mntpt)} = qw(? 0 0 0 0 ?);
+		$ref{free} = 0;
+		return \%ref;
+	}
+
 	# split off the header
 	my ($header, $row) = split(/\n/, $out_and_err);
 

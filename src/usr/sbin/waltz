@@ -798,13 +798,13 @@ if ($flag{W})
 }
 
 # Generate a list of names for the local machine.
+my @names = ('localhost', $rhost, $fqdn, Net::Domain::hostname());
+
 my ($name,$aliases,$addrtype,$length,@addrs) = gethostbyname($rhost);
-my @names = ('localhost', $rhost, $fqdn, $name, split(/\s+/, $aliases));
+if (defined $name)	{ push @names, $name; }
+if (defined $aliases)	{ push @names, split(/\s+/, $aliases); }
 
-# Add the short name too
-push @names, Net::Domain::hostname();
-
-debug "names: @names\n";
+debug "names: ", Dumper \@names;
 
 # Remove backup objects that are not on this server.
 @backups = grep (( anymatch (&machine($_), @names)), @backups);
@@ -955,15 +955,6 @@ sub df
 	my $out_and_err;
 	my @cmd = ('df', '-k', $dir);
 	my $r = run \@cmd, '<', \undef, '>&', \$out_and_err;
-
-	unless ($r)
-	{
-		# df failed - permissions? SELinux?
-		my %ref;
-		@ref{qw(fs bavail used available per mntpt)} = qw(? 0 0 0 0 ?);
-		$ref{free} = 0;
-		return \%ref;
-	}
 
 	# split off the header
 	my ($header, $row) = split(/\n/, $out_and_err);
@@ -1523,6 +1514,7 @@ sub backup
 	#######################################################################
 
 	# Short circuit localhost and names for this host
+	debug 'names: ', Dumper \@names;
 	$host  = '' if (grep(lc($host) eq $_, @names));
 	$host .= ':' if ($host);
 

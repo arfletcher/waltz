@@ -1138,6 +1138,15 @@ sub backup
 	# extract config from the object.
 	my ($obj) = @_;
 
+	# Change to the directory containing the config file to support relative file names
+	# Seems unlikely to fail, but....
+	local $CWD;
+	eval { $CWD = dirname($obj->{'_'}); };
+	if ($@) {
+		print "FAIL\tCannot move to config directory ($!)!\n";
+		return ("FAIL\t$name\tmissing.\n", 0, 0, 0, 0, "missing");
+	}
+
 	# initialise
 	#$report = ''; # reset the output report.
 
@@ -1218,14 +1227,8 @@ sub backup
 		return ("FAIL\t$name\tNo repository specified\n", $summary{files}, $summary{size}, $summary{literal}, time-$start, 'no repository');
 	}
 
-	# First update relative repositories to full paths.
-	unless (File::Spec->file_name_is_absolute($repository))
-	{
-		$repository = File::Spec->catdir(
-			dirname($obj->{'_'}),
-			$repository,
-		);
-	}
+	# Update relative repositories to full and canonical paths.
+	$repository = File::Spec->rel2abs($repository);
 
 	######################
 	my $top		= $name;

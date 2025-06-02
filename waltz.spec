@@ -1,5 +1,5 @@
 Name:           waltz
-Version:        14.5
+Version:        14.6
 Release:        1
 Summary:        waltz backup tool
 License:        Public Domain
@@ -18,7 +18,7 @@ Requires:       perl(Mail::Send) >= 1
 Requires:       perl(Pod::Usage) >= 1
 Requires:       perl(Text::Table) >= 1
 Requires:       perl(Tie::IxHash) >= 1
-Requires:       perl(IPC::Run) >= 1
+Requires:       perl(IPC::Run) >= 0.80
 
 Requires:       logrotate
 Requires:       crontabs
